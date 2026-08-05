@@ -57,6 +57,34 @@ def seed_database(db: Session) -> None:
     db.flush()
 
     statuses = list(StatusEntrega)
+    organizations = [
+        Organizacao(nome="Operação Norte", cnpj="12345678000199", email="norte@sistema.com",
+                     telefone="11999990001", endereco="Av. Norte, 100"),
+        Organizacao(nome="Operação Sul", cnpj="12345678000270", email="sul@sistema.com",
+                     telefone="11999990002", endereco="Av. Sul, 200"),
+    ]
+    db.add_all(organizations)
+    db.flush()
+
+    users[1].organizacao_id = organizations[0].id
+    users[2].organizacao_id = organizations[1].id
+    users[3].organizacao_id = organizations[0].id
+    users[4].organizacao_id = organizations[0].id
+    users[5].organizacao_id = organizations[1].id
+
+    vehicles = [
+        Veiculo(placa="ABC1234", modelo="Fiat Ducato", marca="Fiat", ano=2020, cor="Branco",
+                capacidade_carga=Decimal("1200"), capacidade_volume=Decimal("12"), tipo=TipoVeiculo.VAN,
+                status=StatusVeiculo.DISPONIVEL, quilometragem=50000, ativo=True,
+                organizacao_id=organizations[0].id, motorista_id=users[3].id),
+        Veiculo(placa="XYZ9876", modelo="Mercedes-Benz Actros", marca="Mercedes", ano=2022, cor="Cinza",
+                capacidade_carga=Decimal("8000"), capacidade_volume=Decimal("34"), tipo=TipoVeiculo.CAMINHAO,
+                status=StatusVeiculo.MANUTENCAO, quilometragem=120000, ativo=True,
+                organizacao_id=organizations[1].id, motorista_id=users[5].id),
+    ]
+    db.add_all(vehicles)
+    db.flush()
+
     for i in range(15):
         client = clients[i % len(clients)]
         product = products[i % len(products)]

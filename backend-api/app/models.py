@@ -58,6 +58,7 @@ class Usuario(TimestampMixin, Base):
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     organizacao_id: Mapped[int | None] = mapped_column(ForeignKey("organizacoes.id"), index=True)
     organizacao: Mapped["Organizacao" | None] = relationship(back_populates="usuarios")
+    veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="motorista")
 
 
 class Organizacao(TimestampMixin, Base):
@@ -70,6 +71,7 @@ class Organizacao(TimestampMixin, Base):
     endereco: Mapped[str] = mapped_column(String(255))
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     usuarios: Mapped[list["Usuario"]] = relationship(back_populates="organizacao", cascade="all, delete-orphan")
+    veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="organizacao", cascade="all, delete-orphan")
 
 
 class TipoVeiculo(str, enum.Enum):
@@ -103,8 +105,8 @@ class Veiculo(TimestampMixin, Base):
     status: Mapped[StatusVeiculo] = mapped_column(Enum(StatusVeiculo), default=StatusVeiculo.DISPONIVEL)
     quilometragem: Mapped[int] = mapped_column(default=0)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
-    organizacao: Mapped[Organizacao] = relationship()
-    motorista: Mapped[Usuario | None] = relationship()
+    organizacao: Mapped[Organizacao] = relationship(back_populates="veiculos")
+    motorista: Mapped[Usuario | None] = relationship(back_populates="veiculos")
 
 
 class Cliente(TimestampMixin, Base):

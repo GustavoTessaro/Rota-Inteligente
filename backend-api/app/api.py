@@ -122,15 +122,6 @@ def ensure_vehicle_payload_scope(user: Usuario, data: VeiculoCreate):
     raise HTTPException(403, "Perfil sem permissão para esta operação")
 
 
-def get_or_404(db: Session, model, item_id: int):
-    if current.perfil == Perfil.ADMIN:
-        return
-    if current.perfil != Perfil.GESTOR:
-        raise HTTPException(403, "Perfil sem permissão para esta operação")
-    if current.organizacao_id is None or target.organizacao_id != current.organizacao_id:
-        raise HTTPException(403, "Acesso negado ao usuário de outra organização")
-
-
 def ensure_manageable_user_payload(current: Usuario, data):
     if current.perfil == Perfil.ADMIN:
         return
@@ -249,7 +240,7 @@ def list_vehicles(
     limit: int | None = Query(None, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    user: Usuario = Depends(staff),
+    user: Usuario = Depends(delivery_roles),
 ):
     stmt = select(Veiculo).order_by(Veiculo.placa)
     if busca:
