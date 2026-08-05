@@ -44,6 +44,39 @@ class DirectionsSummary(BaseModel):
     raw: dict | None = None
 
 
+class OptimizeIn(BaseModel):
+    origin: dict | None = None
+    destination: dict | None = None
+    waypoints: list[dict] | None = None
+    vehicle_constraints: dict | None = None
+    time_windows: list[dict] | None = None
+
+
+class OptimizeOut(BaseModel):
+    optimized_order: list[int]
+    ordered_waypoints: list[dict] | None = None
+    distance_meters: int | None = None
+    duration_seconds: int | None = None
+    encoded_polyline: str | None = None
+    raw: dict | None = None
+
+
+@router.post("/optimize", response_model=OptimizeOut)
+def optimize_route(payload: OptimizeIn, svc=Depends(get_google_maps_service)):
+    try:
+        waypoints = payload.waypoints or []
+        res = svc.optimize_route(payload.origin, payload.destination, waypoints, payload.vehicle_constraints, payload.time_windows)
+        return {
+            "optimized_order": res.get("optimized_order", []),
+            "ordered_waypoints": res.get("ordered_waypoints"),
+            "distance_meters": res.get("distance_meters"),
+            "duration_seconds": res.get("duration_seconds"),
+            "encoded_polyline": res.get("encoded_polyline"),
+            "raw": res,
+        }
+    except Exception as e:
+        raise HTTPException(502, f"Erro no serviço de otimização: {e}")
+
 @router.post("/geocode", response_model=GeocodeOut)
 def geocode(payload: GeocodeIn, svc=Depends(get_google_maps_service)):
     try:

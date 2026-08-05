@@ -481,13 +481,28 @@ class DeliveryApp:
         destination = coords[-1]
         waypoints = coords[1:-1] or None
         payload = {"origin": origin, "destination": destination, "waypoints": waypoints}
+        # prefer optimization endpoint; fallback to directions
+        encoded = None
         try:
-            res = self.api.request("POST", "/maps/directions", json=payload)
-        except ApiError as exc:
-            self.notify(str(exc), True)
-            return
+            opt = self.api.request("POST", "/maps/optimize", json=payload)
+            if opt:
+                encoded = opt.get("encoded_polyline")
+                # if optimization returned an ordered_waypoints, update markers
+                ordered = opt.get("ordered_waypoints")
+                if ordered:
+                    # replace payload waypoints with ordered sequence (exclude origin/dest)
+                    payload = {"origin": origin, "destination": destination, "waypoints": ordered}
+        except ApiError:
+            opt = None
 
-        encoded = res.get("encoded_polyline") or (res.get("raw", {}).get("routes", [{}])[0].get("overview_polyline", {}).get("points") if res.get("raw") else None)
+        if not encoded:
+            try:
+                res = self.api.request("POST", "/maps/directions", json=payload)
+            except ApiError as exc:
+                self.notify(str(exc), True)
+                return
+
+            encoded = res.get("encoded_polyline") or (res.get("raw", {}).get("routes", [{}])[0].get("overview_polyline", {}).get("points") if res.get("raw") else None)
         if not encoded:
             self.notify("Não foi possível obter polyline da rota.", True)
             return
