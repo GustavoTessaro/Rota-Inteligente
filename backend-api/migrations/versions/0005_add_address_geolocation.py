@@ -64,6 +64,8 @@ def downgrade():
             pass
 
     # Drop indexes from enderecos if present
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
     if inspector.has_table("enderecos"):
         end_indexes = {idx["name"] for idx in inspector.get_indexes("enderecos")}
         if "ix_enderecos_cliente_id" in end_indexes:
