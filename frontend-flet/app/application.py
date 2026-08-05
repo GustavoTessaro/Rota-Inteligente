@@ -2,6 +2,7 @@
 from urllib.parse import quote
 
 import flet as ft
+import json
 
 from .api_client import ApiClient, ApiError
 from .map_view import MapView
@@ -261,7 +262,9 @@ class DeliveryApp:
                     lng = endereco.get("longitude")
                     if lat and lng:
                         markers.append({"lat": lat, "lng": lng, "title": f"Entrega #{entrega.get('entrega_id')}"})
-                map_control = MapView(markers=markers, height=240)
+                # keep as attribute so other methods can control the map
+                self.map_control = MapView(markers=markers, height=240)
+                map_control = self.map_control
 
             self.content.controls = [
                 self.header_bar("Dashboard", "Indicadores e panorama operacional"),
@@ -454,9 +457,57 @@ class DeliveryApp:
         dialog = ft.AlertDialog(
             title=ft.Text(f'Rota #{route["id"]}'),
             content=content,
-            actions=[ft.TextButton("Fechar", on_click=lambda _: self.close_dialog(dialog))],
+            actions=[
+                ft.TextButton("Fechar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.FilledButton("Mostrar no mapa", on_click=lambda _: (self.close_dialog(dialog), self.show_route_on_map(route)))
+            ],
         )
         self.open_dialog(dialog)
+
+    def show_route_on_map(self, route):
+        # Build origin/destination/waypoints from route entregas
+        entregas = route.get("entregas") or []
+        coords = []
+        for e in entregas:
+            endereco = e.get("endereco") or {}
+            lat = endereco.get("latitude")
+            lng = endereco.get("longitude")
+            if lat and lng:
+                coords.append({"lat": lat, "lng": lng})
+        if len(coords) < 2:
+            self.notify("Rota precisa de pelo menos 2 pontos com coordenadas para exibir.", True)
+            return
+        origin = coords[0]
+        destination = coords[-1]
+        waypoints = coords[1:-1] or None
+        payload = {"origin": origin, "destination": destination, "waypoints": waypoints}
+        try:
+            res = self.api.request("POST", "/maps/directions", json=payload)
+        except ApiError as exc:
+            self.notify(str(exc), True)
+            return
+
+        encoded = res.get("encoded_polyline") or (res.get("raw", {}).get("routes", [{}])[0].get("overview_polyline", {}).get("points") if res.get("raw") else None)
+        if not encoded:
+            self.notify("Não foi possível obter polyline da rota.", True)
+            return
+
+        # ensure map control exists
+        if not getattr(self, 'map_control', None):
+            self.map_control = MapView(markers=[], height=400)
+            # insert map into UI
+            self.content.controls.append(ft.Container(self.map_control, padding=10))
+
+        web = self.map_control.build()
+        # draw the polyline
+        try:
+            web.draw_polyline(encoded)
+        except Exception:
+            try:
+                web.eval_js(f"window.postMessage({json.dumps({'action':'polyline','encoded':encoded})}, '*');")
+            except Exception:
+                pass
+        self.page.update()
 
     def create_route_dialog(self):
         try:
