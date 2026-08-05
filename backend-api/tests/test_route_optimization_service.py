@@ -50,8 +50,24 @@ def test_optimize_calls_endpoint(monkeypatch, tmp_path):
         return DummyResponse({'optimized_order': [0], 'ordered_waypoints': json.get('waypoints', [])})
 
     monkeypatch.setattr('httpx.post', fake_post)
-    # avoid requiring cryptography for jwt in tests
-    monkeypatch.setattr('jwt.encode', lambda payload, key, algorithm, headers=None: 'fake_assertion')
+
+    class DummyCreds:
+        def __init__(self):
+            self.token = None
+            self.expiry = None
+
+        def refresh(self, req):
+            self.token = 'ya29.fake'
+            from datetime import datetime, timedelta
+            self.expiry = datetime.utcnow() + timedelta(seconds=3600)
+
+    # Monkeypatch google-auth credential loading if available in the service module
+    try:
+        import app.services.google_route_optimization_service as service_mod
+        monkeypatch.setattr(service_mod.service_account.Credentials, 'from_service_account_file', lambda path, scopes=None: DummyCreds())
+    except Exception:
+        pass
+
     svc = GoogleRouteOptimizationService(service_account_file=str(sa_file), endpoint='https://example.com/opt')
     res = svc.optimize_route({'lat':0,'lng':0},{'lat':1,'lng':1}, [{'lat':0.1,'lng':0.1}])
     assert 'optimized_order' in res

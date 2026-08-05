@@ -174,9 +174,3 @@ def directions(payload: DirectionsIn, svc=Depends(get_google_maps_service)):
         "raw": res,
     }
     return summary
-
-
-@router.post("/optimize")
-def optimize(payload: DirectionsIn, svc=Depends(get_google_maps_service)):
-    # lightweight stub for optimization
-    return svc.optimize_route(payload.waypoints or [])
