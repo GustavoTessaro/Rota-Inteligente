@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from ..config import settings
+from .google_route_optimization_service import GoogleRouteOptimizationService
 
 
 class GoogleMapsService:
@@ -71,6 +72,15 @@ class GoogleMapsService:
 
         if waypoints is None:
             waypoints = []
+
+        # If configured, delegate to GoogleRouteOptimizationService for real optimization
+        if settings.use_google_route_optimization:
+            try:
+                rosvc = GoogleRouteOptimizationService()
+                return rosvc.optimize_route(origin, destination, waypoints or [], vehicle_constraints, time_windows, vehicle_count=vehicle_count)
+            except Exception:
+                # fallback to stub if any error occurs
+                pass
 
         # For now, return the original order as optimized order and empty metrics.
         optimized_order = list(range(len(waypoints)))

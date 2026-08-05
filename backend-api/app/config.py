@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     google_maps_restricted_key: str | None = None
     # default map center (lat,lng) shown when no data
     maps_default_center: str = "-23.55052,-46.633308"  # São Paulo as default
+    # Route Optimization config
+    use_google_route_optimization: bool = False
+    # Path to service account JSON file for Google Cloud
+    google_route_optimization_service_account_file: str | None = None
+    # Optional explicit endpoint for Route Optimization API (useful for testing)
+    google_route_optimization_endpoint: str | None = None
+    # OAuth scope for routes optimization
+    google_route_optimization_scope: str = "https://www.googleapis.com/auth/cloud-platform"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
