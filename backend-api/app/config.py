@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     jwt_expires_minutes: int = 480
     cors_origins: str = "*"
     seed_database: bool = True
+    # Google Maps configuration
+    google_maps_api_key: str | None = None
+    google_maps_restricted_key: str | None = None
+    # default map center (lat,lng) shown when no data
+    maps_default_center: str = "-23.55052,-46.633308"  # São Paulo as default
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

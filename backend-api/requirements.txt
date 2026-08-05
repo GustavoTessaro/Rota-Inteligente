@@ -10,3 +10,4 @@ python-multipart>=0.0.9,<1
 email-validator>=2.2,<3
 pytest>=8,<9
 httpx>=0.27,<1
+requests>=2.31,<3

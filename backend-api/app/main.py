@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import router
+from .api_maps import router as maps_router
 from .config import settings
 from .database import Base, SessionLocal, engine
 from .seed import seed_database
@@ -31,6 +32,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(maps_router)
 
 
 @app.get("/health")
