@@ -23,6 +23,8 @@ from .models import (
     StatusEntrega,
     StatusPedido,
     Usuario,
+    Veiculo,
+    StatusVeiculo,
 )
 from .schemas import (
     AtribuirIn,
@@ -52,6 +54,9 @@ from .schemas import (
     UsuarioCreate,
     UsuarioOut,
     UsuarioUpdate,
+    VeiculoCreate,
+    VeiculoOut,
+    VeiculoUpdate,
 )
 from .security import create_token, current_user, hash_password, require_roles, verify_password
 
@@ -83,7 +88,41 @@ def validate_driver(db: Session, driver_id: int) -> Usuario:
     return driver
 
 
-def ensure_user_management_scope(current: Usuario, target: Usuario):
+def validate_organization(db: Session, organization_id: int) -> Organizacao:
+    organization = get_or_404(db, Organizacao, organization_id)
+    if not organization.ativo:
+        raise HTTPException(422, "Organização inativa não pode receber veículos")
+    return organization
+
+
+def ensure_vehicle_access_scope(user: Usuario, vehicle: Veiculo):
+    if user.perfil == Perfil.ADMIN:
+        return
+    if user.perfil == Perfil.GESTOR:
+        if user.organizacao_id is None or vehicle.organizacao_id != user.organizacao_id:
+            raise HTTPException(403, "Acesso negado ao veículo de outra organização")
+        return
+    if user.perfil == Perfil.MOTORISTA:
+        if vehicle.motorista_id != user.id:
+            raise HTTPException(403, "Acesso negado ao veículo de outro motorista")
+        return
+    raise HTTPException(403, "Perfil sem permissão para esta operação")
+
+
+def ensure_vehicle_payload_scope(user: Usuario, data: VeiculoCreate):
+    if user.perfil == Perfil.ADMIN:
+        return
+    if user.perfil == Perfil.GESTOR:
+        if user.organizacao_id is None:
+            raise HTTPException(403, "Gestor sem organização não pode gerir veículos")
+        if data.organizacao_id is not None and data.organizacao_id != user.organizacao_id:
+            raise HTTPException(403, "Gestor só pode gerir veículos de sua organização")
+        data.organizacao_id = user.organizacao_id
+        return
+    raise HTTPException(403, "Perfil sem permissão para esta operação")
+
+
+def get_or_404(db: Session, model, item_id: int):
     if current.perfil == Perfil.ADMIN:
         return
     if current.perfil != Perfil.GESTOR:
@@ -201,6 +240,81 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current: Usuario = 
     if any(linked_counts):
         raise HTTPException(409, "Usuário está em uso e não pode ser excluído")
     db.delete(user)
+    commit(db)
+
+
+@router.get("/veiculos", response_model=list[VeiculoOut])
+def list_vehicles(
+    busca: str | None = None,
+    limit: int | None = Query(None, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(staff),
+):
+    stmt = select(Veiculo).order_by(Veiculo.placa)
+    if busca:
+        stmt = stmt.where(
+            (Veiculo.placa.ilike(f"%{busca}%")) |
+            (Veiculo.modelo.ilike(f"%{busca}%")) |
+            (Veiculo.marca.ilike(f"%{busca}%")) |
+            (Veiculo.cor.ilike(f"%{busca}%"))
+        )
+    if user.perfil == Perfil.GESTOR:
+        if user.organizacao_id is None:
+            raise HTTPException(403, "Gestor sem organização não pode listar veículos")
+        stmt = stmt.where(Veiculo.organizacao_id == user.organizacao_id)
+    if user.perfil == Perfil.MOTORISTA:
+        stmt = stmt.where(Veiculo.motorista_id == user.id)
+    if limit:
+        stmt = stmt.offset(offset).limit(limit)
+    return db.scalars(stmt).all()
+
+
+@router.post("/veiculos", response_model=VeiculoOut, status_code=201)
+def create_vehicle(data: VeiculoCreate, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
+    ensure_vehicle_payload_scope(user, data)
+    if data.organizacao_id is None:
+        raise HTTPException(422, "Veículo deve pertencer a uma organização")
+    validate_organization(db, data.organizacao_id)
+    if data.motorista_id is not None:
+        validate_driver(db, data.motorista_id)
+    vehicle = Veiculo(**data.model_dump())
+    db.add(vehicle)
+    commit(db)
+    return vehicle
+
+
+@router.get("/veiculos/{vehicle_id}", response_model=VeiculoOut)
+def get_vehicle(vehicle_id: int, db: Session = Depends(get_db), user: Usuario = Depends(current_user)):
+    vehicle = get_or_404(db, Veiculo, vehicle_id)
+    ensure_vehicle_access_scope(user, vehicle)
+    return vehicle
+
+
+@router.put("/veiculos/{vehicle_id}", response_model=VeiculoOut)
+def update_vehicle(vehicle_id: int, data: VeiculoUpdate, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
+    vehicle = get_or_404(db, Veiculo, vehicle_id)
+    ensure_vehicle_access_scope(user, vehicle)
+    ensure_vehicle_payload_scope(user, data)
+    if data.organizacao_id is None:
+        raise HTTPException(422, "Veículo deve pertencer a uma organização")
+    validate_organization(db, data.organizacao_id)
+    if data.motorista_id is not None:
+        validate_driver(db, data.motorista_id)
+    for key, value in data.model_dump().items():
+        setattr(vehicle, key, value)
+    commit(db)
+    return vehicle
+
+
+@router.delete("/veiculos/{vehicle_id}", status_code=204)
+def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
+    vehicle = get_or_404(db, Veiculo, vehicle_id)
+    ensure_vehicle_access_scope(user, vehicle)
+    linked_deliveries = db.scalar(select(func.count()).select_from(Entrega).where(Entrega.entregador_id == vehicle.motorista_id)) if vehicle.motorista_id else 0
+    if linked_deliveries:
+        raise HTTPException(409, "Veículo está vinculado a entregas e não pode ser excluído")
+    db.delete(vehicle)
     commit(db)
 
 

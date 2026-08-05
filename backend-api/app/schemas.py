@@ -4,7 +4,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from .models import Perfil, Prioridade, StatusEntrega, StatusPedido
+from .models import Perfil, Prioridade, StatusEntrega, StatusPedido, StatusVeiculo, TipoVeiculo
 
 
 class ORMModel(BaseModel):
@@ -108,6 +108,62 @@ class OrganizacaoCreate(BaseModel):
 
 class OrganizacaoOut(OrganizacaoCreate, ORMModel):
     id: int
+    criado_em: datetime
+    atualizado_em: datetime
+
+
+class VeiculoCreate(BaseModel):
+    placa: str = Field(min_length=5, max_length=10)
+    modelo: str = Field(min_length=2, max_length=150)
+    marca: str = Field(min_length=2, max_length=150)
+    ano: int = Field(ge=1900, le=datetime.now().year + 1)
+    cor: str = Field(min_length=2, max_length=50)
+    capacidade_carga: Decimal = Field(default=Decimal("0"), ge=0)
+    capacidade_volume: Decimal = Field(default=Decimal("0"), ge=0)
+    tipo: TipoVeiculo
+    status: StatusVeiculo = StatusVeiculo.DISPONIVEL
+    quilometragem: int = Field(default=0, ge=0)
+    ativo: bool = True
+    organizacao_id: int | None = None
+    motorista_id: int | None = None
+
+    @field_validator("placa", "modelo", "marca", "cor", mode="before")
+    @classmethod
+    def strip_vehicle_text(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("placa")
+    @classmethod
+    def validate_plate(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("Placa inválida")
+        plate = re.sub(r"[^A-Za-z0-9]", "", value).upper()
+        if len(plate) < 5 or len(plate) > 10:
+            raise ValueError("Placa deve conter entre 5 e 10 caracteres alfanuméricos")
+        return plate
+
+
+class VeiculoUpdate(VeiculoCreate):
+    pass
+
+
+class VeiculoOut(ORMModel):
+    id: int
+    placa: str
+    modelo: str
+    marca: str
+    ano: int
+    cor: str
+    capacidade_carga: Decimal
+    capacidade_volume: Decimal
+    tipo: TipoVeiculo
+    status: StatusVeiculo
+    quilometragem: int
+    ativo: bool
+    organizacao_id: int
+    motorista_id: int | None
     criado_em: datetime
     atualizado_em: datetime
 
