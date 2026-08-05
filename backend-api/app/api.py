@@ -15,6 +15,7 @@ from .models import (
     Entrega,
     HistoricoEntrega,
     Ocorrencia,
+    Organizacao,
     Pedido,
     PedidoItem,
     Perfil,
@@ -35,6 +36,8 @@ from .schemas import (
     EntregaOut,
     EntregaStatusIn,
     LoginIn,
+    OrganizacaoCreate,
+    OrganizacaoOut,
     OcorrenciaIn,
     OcorrenciaOut,
     PedidoCreate,
@@ -122,17 +125,9 @@ def list_users(
 def create_user(data: UsuarioCreate, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
     user = Usuario(
         nome=data.nome, email=data.email.lower(), senha_hash=hash_password(data.senha),
-        telefone=data.telefone, perfil=data.perfil,
+        telefone=data.telefone, perfil=data.perfil, organizacao_id=data.organizacao_id,
     )
     db.add(user)
-    commit(db)
-    return user
-
-
-@router.patch("/usuarios/{user_id}/status", response_model=UsuarioOut)
-def user_status(user_id: int, data: StatusIn, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
-    user = get_or_404(db, Usuario, user_id)
-    user.ativo = data.ativo
     commit(db)
     return user
 
@@ -146,6 +141,15 @@ def update_user(user_id: int, data: UsuarioUpdate, db: Session = Depends(get_db)
         user.senha_hash = hash_password(data.senha)
     user.telefone = data.telefone
     user.perfil = data.perfil
+    user.organizacao_id = data.organizacao_id
+    commit(db)
+    return user
+
+
+@router.patch("/usuarios/{user_id}/status", response_model=UsuarioOut)
+def user_status(user_id: int, data: StatusIn, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
+    user = get_or_404(db, Usuario, user_id)
+    user.ativo = data.ativo
     commit(db)
     return user
 
@@ -165,6 +169,48 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current: Usuario = 
     if any(linked_counts):
         raise HTTPException(409, "Usuário está em uso e não pode ser excluído")
     db.delete(user)
+    commit(db)
+
+
+@router.get("/organizacoes", response_model=list[OrganizacaoOut])
+def list_organizacoes(
+    busca: str | None = None,
+    limit: int | None = Query(None, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db), _: Usuario = Depends(admin)
+):
+    stmt = select(Organizacao).order_by(Organizacao.nome)
+    if busca:
+        stmt = stmt.where(Organizacao.nome.ilike(f"%{busca}%"))
+    if limit:
+        stmt = stmt.offset(offset).limit(limit)
+    return db.scalars(stmt).all()
+
+
+@router.post("/organizacoes", response_model=OrganizacaoOut, status_code=201)
+def create_organizacao(data: OrganizacaoCreate, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
+    organizacao = Organizacao(**data.model_dump())
+    db.add(organizacao)
+    commit(db)
+    return organizacao
+
+
+@router.put("/organizacoes/{org_id}", response_model=OrganizacaoOut)
+def update_organizacao(org_id: int, data: OrganizacaoCreate, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
+    organizacao = get_or_404(db, Organizacao, org_id)
+    for key, value in data.model_dump().items():
+        setattr(organizacao, key, value)
+    commit(db)
+    return organizacao
+
+
+@router.delete("/organizacoes/{org_id}", status_code=204)
+def delete_organizacao(org_id: int, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
+    organizacao = get_or_404(db, Organizacao, org_id)
+    linked_users = db.scalar(select(func.count()).select_from(Usuario).where(Usuario.organizacao_id == org_id))
+    if linked_users:
+        raise HTTPException(409, "Organização está em uso e não pode ser excluída")
+    db.delete(organizacao)
     commit(db)
 
 

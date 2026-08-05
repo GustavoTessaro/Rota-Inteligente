@@ -56,6 +56,20 @@ class Usuario(TimestampMixin, Base):
     telefone: Mapped[str | None] = mapped_column(String(20))
     perfil: Mapped[Perfil] = mapped_column(Enum(Perfil))
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    organizacao_id: Mapped[int | None] = mapped_column(ForeignKey("organizacoes.id"), index=True)
+    organizacao: Mapped["Organizacao" | None] = relationship(back_populates="usuarios")
+
+
+class Organizacao(TimestampMixin, Base):
+    __tablename__ = "organizacoes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(150), index=True)
+    cnpj: Mapped[str] = mapped_column(String(14), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(150))
+    telefone: Mapped[str | None] = mapped_column(String(20))
+    endereco: Mapped[str] = mapped_column(String(255))
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    usuarios: Mapped[list["Usuario"]] = relationship(back_populates="organizacao", cascade="all, delete-orphan")
 
 
 class Cliente(TimestampMixin, Base):

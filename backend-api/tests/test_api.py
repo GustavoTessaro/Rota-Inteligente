@@ -358,6 +358,72 @@ def test_update_user_keeps_password_when_blank(client, admin_headers):
     assert login.status_code == 200
 
 
+def test_create_and_list_organizacao(client, admin_headers):
+    response = client.post("/api/organizacoes", headers=admin_headers, json={
+        "nome": "Organizacao Teste",
+        "cnpj": "11222333444455",
+        "email": "orgteste@email.com",
+        "telefone": "11988887777",
+        "endereco": "Rua Teste, 123",
+        "ativo": True,
+    })
+    assert response.status_code == 201
+    created = response.json()
+    assert created["nome"] == "Organizacao Teste"
+
+    list_response = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers)
+    assert list_response.status_code == 200
+    assert any(item["id"] == created["id"] for item in list_response.json())
+
+
+def test_update_organizacao(client, admin_headers):
+    created = client.post("/api/organizacoes", headers=admin_headers, json={
+        "nome": "Organizacao Atualizavel",
+        "cnpj": "22333444555666",
+        "email": "orgupdate@email.com",
+        "telefone": "11977776666",
+        "endereco": "Avenida Atualizar, 456",
+        "ativo": True,
+    }).json()
+
+    response = client.put(f'/api/organizacoes/{created["id"]}', headers=admin_headers, json={
+        "nome": "Organizacao Atualizada",
+        "cnpj": "22333444555666",
+        "email": "orgupdated@email.com",
+        "telefone": "11977776666",
+        "endereco": "Avenida Atualizada, 456",
+        "ativo": False,
+    })
+    assert response.status_code == 200
+    assert response.json()["nome"] == "Organizacao Atualizada"
+    assert response.json()["ativo"] is False
+
+
+def test_delete_organizacao_with_users_is_blocked(client, admin_headers):
+    created = client.post("/api/organizacoes", headers=admin_headers, json={
+        "nome": "Organizacao Vinculada",
+        "cnpj": "33444555666777",
+        "email": "orglinked@email.com",
+        "telefone": "11966665555",
+        "endereco": "Rua Vinculo, 789",
+        "ativo": True,
+    }).json()
+
+    user = client.post("/api/usuarios", headers=admin_headers, json={
+        "nome": "Usuario Vinculado",
+        "email": "usuario.vinculado@sistema.com",
+        "senha": "123456",
+        "telefone": None,
+        "perfil": "OPERADOR",
+        "organizacao_id": created["id"],
+    })
+    assert user.status_code == 201
+
+    delete_response = client.delete(f'/api/organizacoes/{created["id"]}', headers=admin_headers)
+    assert delete_response.status_code == 409
+    assert delete_response.json()["detail"] == "Organização está em uso e não pode ser excluída"
+
+
 def test_delete_user_without_links_removes_record(client, admin_headers):
     created = client.post("/api/usuarios", headers=admin_headers, json={
         "nome": "Usuario Sem Vinculo",

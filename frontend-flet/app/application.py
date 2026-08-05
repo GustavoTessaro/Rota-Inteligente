@@ -91,6 +91,7 @@ class DeliveryApp:
         if not driver:
             destinations += [
                 ft.NavigationRailDestination(icon=ft.Icons.PEOPLE, label="Clientes"),
+                ft.NavigationRailDestination(icon=ft.Icons.BUILDING, label="Organizações"),
                 ft.NavigationRailDestination(icon=ft.Icons.RECEIPT_LONG, label="Pedidos"),
                 ft.NavigationRailDestination(icon=ft.Icons.INVENTORY_2, label="Produtos"),
                 ft.NavigationRailDestination(icon=ft.Icons.BAR_CHART, label="Relatórios"),
@@ -101,8 +102,8 @@ class DeliveryApp:
             actions = [self.dashboard_view, self.deliveries_view]
             if not driver:
                 actions += [
-                    self.clients_view, self.orders_view, self.products_view,
-                    self.reports_view, self.users_view,
+                    self.clients_view, self.organizations_view, self.orders_view,
+                    self.products_view, self.reports_view, self.users_view,
                 ]
             actions[event.control.selected_index]()
 
@@ -746,6 +747,146 @@ class DeliveryApp:
         except ApiError as exc:
             self.notify(str(exc), True)
 
+    def organizations_view(self, search="", offset=0):
+        page_size = 10
+        try:
+            params = [f"limit={page_size}", f"offset={offset}"]
+            if search.strip():
+                params.append(f"busca={quote(search.strip())}")
+            path = "/organizacoes?" + "&".join(params)
+            organizations = self.api.request("GET", path)
+            search_field = ft.TextField(
+                label="Buscar organização",
+                value=search,
+                prefix_icon=ft.Icons.SEARCH,
+                on_submit=lambda event: self.organizations_view(event.control.value),
+            )
+            rows = []
+            for item in organizations:
+                status = "Ativa" if item["ativo"] else "Inativa"
+                subtitle = f'{item["cnpj"]} · {item["email"]} · {status}'
+                actions = [
+                    ft.IconButton(
+                        ft.Icons.EDIT,
+                        tooltip="Editar organização",
+                        on_click=lambda _, org=item: self.organization_dialog(org),
+                    ),
+                    ft.IconButton(
+                        ft.Icons.DELETE,
+                        tooltip="Excluir organização",
+                        icon_color=ft.Colors.RED_700,
+                        on_click=lambda _, org=item: self.confirm_delete_organization(org),
+                    ),
+                ]
+                rows.append(ft.ListTile(
+                    leading=ft.Icon(ft.Icons.BUILDING),
+                    title=ft.Text(item["nome"]),
+                    subtitle=ft.Text(subtitle),
+                    trailing=ft.Row(actions, tight=True),
+                ))
+            self.content.controls = [
+                self.header_bar("Organizações", f"{len(organizations)} organização(ões)", [
+                    ft.FilledButton("Nova organização", icon=ft.Icons.ADD,
+                                    on_click=lambda _: self.organization_dialog()),
+                ]),
+                ft.Container(ft.Row([
+                    search_field,
+                    ft.IconButton(ft.Icons.SEARCH, tooltip="Buscar", on_click=lambda _: self.organizations_view(search_field.value, 0)),
+                    ft.IconButton(ft.Icons.CLEAR, tooltip="Limpar", on_click=lambda _: self.organizations_view()),
+                    self.page_controls(
+                        lambda _: self.organizations_view(search, max(0, offset - page_size)),
+                        lambda _: self.organizations_view(search, offset + page_size),
+                        can_previous=offset > 0,
+                        can_next=len(organizations) == page_size,
+                    ),
+                ]), padding=20),
+                ft.Container(ft.Column(rows or [ft.Text("Nenhuma organização encontrada.")]), padding=10),
+            ]
+            self.page.update()
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
+    def organization_dialog(self, organization=None):
+        name = ft.TextField(label="Nome", value=(organization or {}).get("nome", ""))
+        cnpj = ft.TextField(label="CNPJ", value=(organization or {}).get("cnpj") or "")
+        email = ft.TextField(label="E-mail", value=(organization or {}).get("email") or "")
+        phone = ft.TextField(label="Telefone", value=(organization or {}).get("telefone") or "")
+        address = ft.TextField(label="Endereço", value=(organization or {}).get("endereco") or "", multiline=True)
+        active = ft.Checkbox(label="Ativo", value=(organization or {}).get("ativo", True))
+
+        def validate():
+            valid = True
+            self.clear_errors(name, cnpj, email, address)
+            if len(name.value.strip()) < 2:
+                self.set_error(name, "Informe pelo menos 2 caracteres.")
+                valid = False
+            cnpj_digits = self.only_digits(cnpj.value)
+            if len(cnpj_digits) != 14:
+                self.set_error(cnpj, "CNPJ deve ter 14 dígitos.")
+                valid = False
+            if not self.validate_email_field(email):
+                valid = False
+            if len(address.value.strip()) < 5:
+                self.set_error(address, "Informe um endereço válido.")
+                valid = False
+            self.page.update()
+            return valid
+
+        def save(_):
+            if not validate():
+                self.notify("Corrija os campos destacados.", True)
+                return
+            payload = {
+                "nome": name.value.strip(),
+                "cnpj": self.only_digits(cnpj.value),
+                "email": email.value.strip(),
+                "telefone": self.only_digits(phone.value) or None,
+                "endereco": address.value.strip(),
+                "ativo": active.value,
+            }
+            try:
+                if organization:
+                    self.api.request("PUT", f'/organizacoes/{organization["id"]}', json=payload)
+                    message = "Organização atualizada."
+                else:
+                    self.api.request("POST", "/organizacoes", json=payload)
+                    message = "Organização cadastrada."
+                dialog.open = False
+                self.notify(message)
+                self.organizations_view()
+            except ApiError as exc:
+                dialog.open = False
+                self.show_error_dialog(str(exc), "Não foi possível salvar")
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Editar organização" if organization else "Nova organização"),
+            content=ft.Column([name, cnpj, email, phone, address, active], tight=True, width=420),
+            actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                     ft.FilledButton("Salvar", on_click=save)],
+        )
+        self.open_dialog(dialog)
+
+    def confirm_delete_organization(self, organization):
+        def delete(_):
+            try:
+                self.api.request("DELETE", f'/organizacoes/{organization["id"]}')
+                dialog.open = False
+                self.notify("Organização excluída.")
+                self.organizations_view()
+            except ApiError as exc:
+                dialog.open = False
+                self.show_error_dialog(str(exc), "Não foi possível excluir")
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Excluir organização"),
+            content=ft.Text(f'Deseja excluir "{organization["nome"]}"?'),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.FilledButton("Excluir", icon=ft.Icons.DELETE, on_click=delete),
+            ],
+        )
+        self.open_dialog(dialog)
+
     def client_dialog(self, client=None):
         name = ft.TextField(label="Nome", value=(client or {}).get("nome", ""))
         document = ft.TextField(label="CPF/CNPJ", value=(client or {}).get("cpf_cnpj") or "")
@@ -1197,9 +1338,26 @@ class DeliveryApp:
             value=(user or {}).get("perfil", "OPERADOR"),
             options=[self.option(value) for value in ["ADMIN", "OPERADOR", "ENTREGADOR"]],
         )
+        organization = ft.Dropdown(
+            label="Organização",
+            value=str((user or {}).get("organizacao_id")) if (user or {}).get("organizacao_id") else None,
+            options=[],
+        )
+
+        def load_organizations():
+            try:
+                orgs = self.api.request("GET", "/organizacoes?limit=100&offset=0")
+                organization.options = [self.option(item["id"], item["nome"]) for item in orgs]
+                if user and user.get("organizacao_id"):
+                    organization.value = str(user["organizacao_id"])
+                self.page.update()
+            except ApiError as exc:
+                self.notify(str(exc), True)
+
+        load_organizations()
 
         def save(_):
-            self.clear_errors(name, email, password, profile)
+            self.clear_errors(name, email, password, profile, organization)
             valid = all([
                 self.require_text(name, "Informe pelo menos 2 caracteres.", 2),
                 self.validate_email_field(email),
@@ -1221,6 +1379,7 @@ class DeliveryApp:
                 "senha": password.value.strip() or None,
                 "telefone": phone.value.strip() or None,
                 "perfil": profile.value,
+                "organizacao_id": int(organization.value) if organization.value else None,
             }
             try:
                 if user:
@@ -1238,7 +1397,7 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar usuário" if user else "Novo usuário"),
-            content=ft.Column([name, email, password, phone, profile], tight=True, width=380),
+            content=ft.Column([name, email, password, phone, profile, organization], tight=True, width=380),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )

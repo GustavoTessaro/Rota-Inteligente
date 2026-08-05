@@ -23,6 +23,7 @@ class UsuarioOut(ORMModel):
     telefone: str | None
     perfil: Perfil
     ativo: bool
+    organizacao_id: int | None
 
 
 class TokenOut(BaseModel):
@@ -36,6 +37,7 @@ class UsuarioCreate(BaseModel):
     senha: str = Field(min_length=6)
     telefone: str | None = None
     perfil: Perfil
+    organizacao_id: int | None = None
 
     @field_validator("nome", "telefone", mode="before")
     @classmethod
@@ -52,6 +54,7 @@ class UsuarioUpdate(BaseModel):
     senha: str | None = Field(default=None, min_length=6)
     telefone: str | None = None
     perfil: Perfil
+    organizacao_id: int | None = None
 
     @field_validator("nome", "senha", "telefone", mode="before")
     @classmethod
@@ -64,6 +67,49 @@ class UsuarioUpdate(BaseModel):
 
 class StatusIn(BaseModel):
     ativo: bool
+
+
+class OrganizacaoCreate(BaseModel):
+    nome: str = Field(min_length=2, max_length=150)
+    cnpj: str
+    email: EmailStr
+    telefone: str | None = None
+    endereco: str = Field(min_length=5, max_length=255)
+    ativo: bool = True
+
+    @field_validator("nome", "endereco", mode="before")
+    @classmethod
+    def strip_text(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("cnpj")
+    @classmethod
+    def validate_cnpj(cls, value):
+        digits = re.sub(r"\D", "", value or "")
+        if len(digits) != 14:
+            raise ValueError("CNPJ deve ter 14 dígitos")
+        return digits
+
+    @field_validator("telefone", mode="before")
+    @classmethod
+    def normalize_phone(cls, value):
+        if value is None:
+            return None
+        digits = re.sub(r"\D", "", value)
+        if digits == "":
+            return None
+        if not 10 <= len(digits) <= 11:
+            raise ValueError("Telefone deve ter 10 ou 11 dígitos")
+        return digits
+
+
+class OrganizacaoOut(OrganizacaoCreate, ORMModel):
+    id: int
+    criado_em: datetime
+    atualizado_em: datetime
 
 
 class ClienteCreate(BaseModel):
