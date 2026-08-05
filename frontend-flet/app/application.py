@@ -169,22 +169,102 @@ class DeliveryApp:
             data = self.api.request("GET", "/relatorios/dashboard")
             cards = []
             labels = [
-                ("Total", "total_entregas", ft.Icons.INVENTORY),
-                ("Aguardando", "aguardando_coleta", ft.Icons.HOURGLASS_TOP),
-                ("Em rota", "em_rota", ft.Icons.ROUTE),
-                ("Concluídas", "concluidas", ft.Icons.CHECK_CIRCLE),
-                ("Atrasadas", "atrasadas", ft.Icons.WARNING),
-                ("Pedidos abertos", "pedidos_abertos", ft.Icons.RECEIPT),
+                ("Total de entregas hoje", "entregas_hoje", ft.Icons.CALENDAR_TODAY),
+                ("Entregas concluídas", "entregas_concluidas", ft.Icons.CHECK_CIRCLE),
+                ("Entregas em andamento", "entregas_andamento", ft.Icons.ROUTE),
+                ("Entregas atrasadas", "entregas_atrasadas", ft.Icons.WARNING),
+                ("Rotas em execução", "rotas_em_execucao", ft.Icons.DIRECTIONS_RUN),
+                ("Veículos disponíveis", "veiculos_disponiveis", ft.Icons.DIRECTIONS_CAR),
+                ("Motoristas ativos", "motoristas_ativos", ft.Icons.PERSON),
             ]
             for label, key, icon in labels:
                 cards.append(ft.Container(
-                    ft.Column([ft.Icon(icon, color=ft.Colors.INDIGO), ft.Text(str(data[key]), size=28),
-                               ft.Text(label)]),
-                    padding=18, width=180, border_radius=14, bgcolor=ft.Colors.INDIGO_50,
+                    ft.Column([
+                        ft.Icon(icon, color=ft.Colors.INDIGO),
+                        ft.Text(str(data.get(key, 0)), size=28, weight=ft.FontWeight.BOLD),
+                        ft.Text(label),
+                    ]),
+                    padding=18, width=220, border_radius=14, bgcolor=ft.Colors.INDIGO_50,
                 ))
+
+            def build_bar_item(label, value, max_value):
+                width = 240 if max_value > 0 else 50
+                bar_width = int((value / max_value) * width) if max_value > 0 else 0
+                return ft.Column([
+                    ft.Row([
+                        ft.Text(label, size=12),
+                        ft.Text(str(value), size=12, weight=ft.FontWeight.BOLD),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Container(height=14, width=width, bgcolor=ft.Colors.GREY_200, border_radius=7, padding=1,
+                                 content=ft.Container(width=bar_width, bgcolor=ft.Colors.INDIGO, border_radius=7)),
+                ], tight=True)
+
+            status_items = data.get("entregas_por_status", [])
+            max_status = max((item["quantidade"] for item in status_items), default=1)
+            status_chart = ft.Column(
+                [ft.Text("Entregas por status", weight=ft.FontWeight.BOLD)] +
+                [build_bar_item(item["status"].replace("_", " ").title(), item["quantidade"], max_status)
+                 for item in status_items],
+                spacing=10,
+            )
+
+            driver_items = data.get("entregas_por_motorista", [])[:5]
+            max_driver = max((item["quantidade"] for item in driver_items), default=1)
+            driver_chart = ft.Column(
+                [ft.Text("Entregas por motorista", weight=ft.FontWeight.BOLD)] +
+                [build_bar_item(item["nome"], item["quantidade"], max_driver) for item in driver_items],
+                spacing=10,
+            )
+
+            vehicle_items = data.get("entregas_por_veiculo", [])[:5]
+            max_vehicle = max((item["quantidade"] for item in vehicle_items), default=1)
+            vehicle_chart = ft.Column(
+                [ft.Text("Entregas por veículo", weight=ft.FontWeight.BOLD)] +
+                [build_bar_item(item["nome"], item["quantidade"], max_vehicle) for item in vehicle_items],
+                spacing=10,
+            )
+
+            evolution_items = data.get("evolucao_diaria_entregas", [])
+            max_evolution = max((item["quantidade"] for item in evolution_items), default=1)
+            evolution_chart = ft.Column(
+                [ft.Text("Evolução diária das entregas", weight=ft.FontWeight.BOLD)] +
+                [build_bar_item(item["data"], item["quantidade"], max_evolution) for item in evolution_items],
+                spacing=10,
+            )
+
+            latest_deliveries = [
+                ft.ListTile(
+                    leading=ft.Icon(ft.Icons.LOCAL_SHIPPING),
+                    title=ft.Text(f'Entrega #{item["id"]} · Pedido #{item["pedido_id"]}'),
+                    subtitle=ft.Text(f'{item["status"].replace("_", " ")} · {item.get("data_entrega") or item.get("previsao_entrega") or "-"}'),
+                )
+                for item in data.get("ultimas_entregas", [])
+            ]
+
+            next_routes = [
+                ft.ListTile(
+                    leading=ft.Icon(ft.Icons.TRIP_ORIGIN),
+                    title=ft.Text(f'Rota #{item["id"]} · {item["nome"]}'),
+                    subtitle=ft.Text(f'{item["status"].replace("_", " ")} · {item.get("data_planejada") or "-"}'),
+                )
+                for item in data.get("proximas_rotas", [])
+            ]
+
             self.content.controls = [
-                ft.Container(self.heading("Dashboard", "Visão operacional atual"), padding=20),
+                self.header_bar("Dashboard", "Indicadores e panorama operacional"),
                 ft.Container(ft.Row(cards, wrap=True, spacing=12), padding=20),
+                ft.Container(ft.Row([
+                    ft.Container(status_chart, expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                    ft.Container(driver_chart, expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                ], wrap=True, spacing=12), padding=20),
+                ft.Container(ft.Row([
+                    ft.Container(vehicle_chart, expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                    ft.Container(evolution_chart, expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                ], wrap=True, spacing=12), padding=20),
+                ft.Container(ft.Row([
+                    ft.Container(ft.Column([ft.Text("Últimas entregas", weight=ft.FontWeight.BOLD)] + (latest_deliveries or [ft.Text("Nenhuma entrega encontrada.")]), tight=True), expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                    ft.Container(ft.Column([ft.Text("Próximas rotas", weight=ft.FontWeight.BOLD)] + (next_routes or [ft.Text("Nenhuma rota agendada.")]), tight=True), expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                ], wrap=True, spacing=12), padding=20),
             ]
             self.page.update()
         except ApiError as exc:

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 import re
 
@@ -457,6 +457,58 @@ class EntregaOut(ORMModel):
     data_entrega: datetime | None
     observacoes: str | None
     criado_em: datetime
+
+
+class DashboardStatusCount(BaseModel):
+    status: StatusEntrega
+    quantidade: int
+
+
+class DashboardLabelCount(BaseModel):
+    nome: str
+    quantidade: int
+
+
+class DashboardDailyEvolutionItem(BaseModel):
+    data: date
+    quantidade: int
+
+
+class DashboardDeliveryItem(BaseModel):
+    id: int
+    pedido_id: int
+    entregador_id: int | None
+    status: StatusEntrega
+    previsao_entrega: datetime | None
+    data_entrega: datetime | None
+    criado_em: datetime
+
+
+class DashboardRouteItem(BaseModel):
+    id: int
+    nome: str
+    status: StatusRota
+    data_planejada: datetime | None
+    veiculo_id: int | None
+    motorista_id: int | None
+    organizacao_id: int
+
+
+class DashboardOut(BaseModel):
+    total_entregas: int
+    entregas_hoje: int
+    entregas_concluidas: int
+    entregas_andamento: int
+    entregas_atrasadas: int
+    rotas_em_execucao: int
+    veiculos_disponiveis: int
+    motoristas_ativos: int
+    entregas_por_status: list[DashboardStatusCount]
+    entregas_por_motorista: list[DashboardLabelCount]
+    entregas_por_veiculo: list[DashboardLabelCount]
+    evolucao_diaria_entregas: list[DashboardDailyEvolutionItem]
+    ultimas_entregas: list[DashboardDeliveryItem]
+    proximas_rotas: list[DashboardRouteItem]
 
 
 class AtribuirIn(BaseModel):

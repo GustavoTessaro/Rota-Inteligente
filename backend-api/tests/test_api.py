@@ -1,7 +1,25 @@
 def test_login_and_dashboard(client, admin_headers):
     response = client.get("/api/relatorios/dashboard", headers=admin_headers)
     assert response.status_code == 200
-    assert response.json()["total_entregas"] == 15
+    data = response.json()
+    assert data["total_entregas"] == 15
+    assert "entregas_hoje" in data
+    assert "entregas_concluidas" in data
+    assert "entregas_por_status" in data
+    assert isinstance(data["entregas_por_status"], list)
+    assert "ultimas_entregas" in data
+    assert "proximas_rotas" in data
+
+
+def test_dashboard_metrics_are_consistent(client, admin_headers):
+    response = client.get("/api/relatorios/dashboard", headers=admin_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_entregas"] >= data["entregas_concluidas"]
+    assert data["rotas_em_execucao"] >= 0
+    assert data["veiculos_disponiveis"] >= 0
+    assert data["motoristas_ativos"] >= 0
+    assert all(isinstance(item["quantidade"], int) for item in data["entregas_por_status"])
 
 
 def test_list_endpoints_support_pagination(client, admin_headers):
