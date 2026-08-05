@@ -14,8 +14,8 @@ def now() -> datetime:
 
 class Perfil(str, enum.Enum):
     ADMIN = "ADMIN"
-    OPERADOR = "OPERADOR"
-    ENTREGADOR = "ENTREGADOR"
+    GESTOR = "GESTOR"
+    MOTORISTA = "MOTORISTA"
     CLIENTE = "CLIENTE"
 
 

@@ -15,7 +15,7 @@ branch_labels = None
 depends_on = None
 
 
-perfil = sa.Enum("ADMIN", "OPERADOR", "ENTREGADOR", "CLIENTE", name="perfil")
+perfil = sa.Enum("ADMIN", "GESTOR", "MOTORISTA", "CLIENTE", name="perfil")
 status_pedido = sa.Enum("ABERTO", "EM_PROCESSAMENTO", "FINALIZADO", "CANCELADO", name="statuspedido")
 prioridade = sa.Enum("BAIXA", "NORMAL", "ALTA", "URGENTE", name="prioridade")
 status_entrega = sa.Enum(

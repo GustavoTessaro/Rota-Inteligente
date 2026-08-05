@@ -57,8 +57,8 @@ from .security import create_token, current_user, hash_password, require_roles, 
 
 router = APIRouter(prefix="/api")
 admin = require_roles(Perfil.ADMIN)
-staff = require_roles(Perfil.ADMIN, Perfil.OPERADOR)
-delivery_roles = require_roles(Perfil.ADMIN, Perfil.OPERADOR, Perfil.ENTREGADOR)
+staff = require_roles(Perfil.ADMIN, Perfil.GESTOR)
+delivery_roles = require_roles(Perfil.ADMIN, Perfil.GESTOR, Perfil.MOTORISTA)
 
 
 def get_or_404(db: Session, model, item_id: int):
@@ -78,9 +78,32 @@ def commit(db: Session):
 
 def validate_driver(db: Session, driver_id: int) -> Usuario:
     driver = get_or_404(db, Usuario, driver_id)
-    if driver.perfil != Perfil.ENTREGADOR or not driver.ativo:
-        raise HTTPException(422, "O entregador deve possuir perfil ENTREGADOR e estar ativo")
+    if driver.perfil != Perfil.MOTORISTA or not driver.ativo:
+        raise HTTPException(422, "O motorista deve possuir perfil MOTORISTA e estar ativo")
     return driver
+
+
+def ensure_user_management_scope(current: Usuario, target: Usuario):
+    if current.perfil == Perfil.ADMIN:
+        return
+    if current.perfil != Perfil.GESTOR:
+        raise HTTPException(403, "Perfil sem permissão para esta operação")
+    if current.organizacao_id is None or target.organizacao_id != current.organizacao_id:
+        raise HTTPException(403, "Acesso negado ao usuário de outra organização")
+
+
+def ensure_manageable_user_payload(current: Usuario, data):
+    if current.perfil == Perfil.ADMIN:
+        return
+    if current.perfil != Perfil.GESTOR:
+        raise HTTPException(403, "Perfil sem permissão para esta operação")
+    if data.perfil == Perfil.ADMIN:
+        raise HTTPException(403, "Gestor não pode criar ou alterar usuários com perfil ADMIN")
+    if current.organizacao_id is None:
+        raise HTTPException(403, "Gestor sem organização não pode gerir usuários")
+    if data.organizacao_id is not None and data.organizacao_id != current.organizacao_id:
+        raise HTTPException(403, "Gestor só pode gerir usuários de sua organização")
+    data.organizacao_id = current.organizacao_id
 
 
 def order_has_delivery(db: Session, order_id: int) -> bool:
@@ -113,50 +136,59 @@ def logout(_: Usuario = Depends(current_user)):
 def list_users(
     limit: int | None = Query(None, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db), _: Usuario = Depends(admin)
+    db: Session = Depends(get_db), user: Usuario = Depends(staff)
 ):
     stmt = select(Usuario).order_by(Usuario.nome)
+    if user.perfil == Perfil.GESTOR:
+        if user.organizacao_id is None:
+            raise HTTPException(403, "Gestor sem organização não pode listar usuários")
+        stmt = stmt.where(Usuario.organizacao_id == user.organizacao_id)
     if limit:
         stmt = stmt.offset(offset).limit(limit)
     return db.scalars(stmt).all()
 
 
 @router.post("/usuarios", response_model=UsuarioOut, status_code=201)
-def create_user(data: UsuarioCreate, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
-    user = Usuario(
+def create_user(data: UsuarioCreate, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
+    ensure_manageable_user_payload(user, data)
+    user_entity = Usuario(
         nome=data.nome, email=data.email.lower(), senha_hash=hash_password(data.senha),
         telefone=data.telefone, perfil=data.perfil, organizacao_id=data.organizacao_id,
     )
-    db.add(user)
+    db.add(user_entity)
     commit(db)
-    return user
+    return user_entity
 
 
 @router.put("/usuarios/{user_id}", response_model=UsuarioOut)
-def update_user(user_id: int, data: UsuarioUpdate, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
-    user = get_or_404(db, Usuario, user_id)
-    user.nome = data.nome
-    user.email = data.email.lower()
+def update_user(user_id: int, data: UsuarioUpdate, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
+    existing_user = get_or_404(db, Usuario, user_id)
+    ensure_user_management_scope(user, existing_user)
+    ensure_manageable_user_payload(user, data)
+    existing_user.nome = data.nome
+    existing_user.email = data.email.lower()
     if data.senha:
-        user.senha_hash = hash_password(data.senha)
-    user.telefone = data.telefone
-    user.perfil = data.perfil
-    user.organizacao_id = data.organizacao_id
+        existing_user.senha_hash = hash_password(data.senha)
+    existing_user.telefone = data.telefone
+    existing_user.perfil = data.perfil
+    existing_user.organizacao_id = data.organizacao_id
     commit(db)
-    return user
+    return existing_user
 
 
 @router.patch("/usuarios/{user_id}/status", response_model=UsuarioOut)
-def user_status(user_id: int, data: StatusIn, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
-    user = get_or_404(db, Usuario, user_id)
-    user.ativo = data.ativo
+def user_status(user_id: int, data: StatusIn, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
+    existing_user = get_or_404(db, Usuario, user_id)
+    ensure_user_management_scope(user, existing_user)
+    existing_user.ativo = data.ativo
     commit(db)
-    return user
+    return existing_user
 
 
 @router.delete("/usuarios/{user_id}", status_code=204)
-def delete_user(user_id: int, db: Session = Depends(get_db), current: Usuario = Depends(admin)):
+def delete_user(user_id: int, db: Session = Depends(get_db), current: Usuario = Depends(staff)):
     user = get_or_404(db, Usuario, user_id)
+    ensure_user_management_scope(current, user)
     if user.id == current.id:
         raise HTTPException(422, "O usuário logado não pode ser excluído")
     linked_counts = [
@@ -540,8 +572,8 @@ def list_deliveries(
 
 @router.get("/entregas/minhas", response_model=list[EntregaOut])
 def my_deliveries(db: Session = Depends(get_db), user: Usuario = Depends(current_user)):
-    if user.perfil != Perfil.ENTREGADOR:
-        raise HTTPException(403, "Endpoint exclusivo para entregadores")
+    if user.perfil != Perfil.MOTORISTA:
+        raise HTTPException(403, "Endpoint exclusivo para motoristas")
     return db.scalars(
         select(Entrega).where(Entrega.entregador_id == user.id).order_by(Entrega.previsao_entrega)
     ).all()
@@ -573,7 +605,7 @@ def get_delivery(
     delivery_id: int, db: Session = Depends(get_db), user: Usuario = Depends(current_user)
 ):
     delivery = get_or_404(db, Entrega, delivery_id)
-    if user.perfil == Perfil.ENTREGADOR and delivery.entregador_id != user.id:
+    if user.perfil == Perfil.MOTORISTA and delivery.entregador_id != user.id:
         raise HTTPException(403, "Entrega não atribuída ao usuário")
     return delivery
 
@@ -627,7 +659,7 @@ def update_delivery_status(
     user: Usuario = Depends(delivery_roles),
 ):
     delivery = get_or_404(db, Entrega, delivery_id)
-    if user.perfil == Perfil.ENTREGADOR and delivery.entregador_id != user.id:
+    if user.perfil == Perfil.MOTORISTA and delivery.entregador_id != user.id:
         raise HTTPException(403, "Entrega não atribuída ao usuário")
     if delivery.status == StatusEntrega.CANCELADA and user.perfil != Perfil.ADMIN:
         raise HTTPException(422, "Somente administrador pode reabrir entrega cancelada")
@@ -711,7 +743,7 @@ def create_receipt(
     user: Usuario = Depends(delivery_roles),
 ):
     delivery = get_or_404(db, Entrega, delivery_id)
-    if user.perfil == Perfil.ENTREGADOR and delivery.entregador_id != user.id:
+    if user.perfil == Perfil.MOTORISTA and delivery.entregador_id != user.id:
         raise HTTPException(403, "Entrega não atribuída ao usuário")
     if delivery.comprovante:
         raise HTTPException(409, "A entrega já possui comprovante")
@@ -736,7 +768,7 @@ def update_receipt(
     delivery_id: int, data: ComprovanteIn, db: Session = Depends(get_db), user: Usuario = Depends(delivery_roles)
 ):
     delivery = get_or_404(db, Entrega, delivery_id)
-    if user.perfil == Perfil.ENTREGADOR and delivery.entregador_id != user.id:
+    if user.perfil == Perfil.MOTORISTA and delivery.entregador_id != user.id:
         raise HTTPException(403, "Entrega não atribuída ao usuário")
     receipt = db.scalar(select(ComprovanteEntrega).where(ComprovanteEntrega.entrega_id == delivery_id))
     if not receipt:
@@ -750,7 +782,7 @@ def update_receipt(
 @router.delete("/entregas/{delivery_id}/comprovante", status_code=204)
 def delete_receipt(delivery_id: int, db: Session = Depends(get_db), user: Usuario = Depends(delivery_roles)):
     delivery = get_or_404(db, Entrega, delivery_id)
-    if user.perfil == Perfil.ENTREGADOR and delivery.entregador_id != user.id:
+    if user.perfil == Perfil.MOTORISTA and delivery.entregador_id != user.id:
         raise HTTPException(403, "Entrega não atribuída ao usuário")
     receipt = db.scalar(select(ComprovanteEntrega).where(ComprovanteEntrega.entrega_id == delivery_id))
     if not receipt:

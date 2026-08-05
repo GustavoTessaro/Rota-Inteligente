@@ -337,7 +337,7 @@ def test_update_user_keeps_password_when_blank(client, admin_headers):
         "email": "usuario.teste@sistema.com",
         "senha": "123456",
         "telefone": None,
-        "perfil": "OPERADOR",
+        "perfil": "GESTOR",
     })
     assert created.status_code == 201
     user_id = created.json()["id"]
@@ -347,7 +347,7 @@ def test_update_user_keeps_password_when_blank(client, admin_headers):
         "email": "usuario.editado@sistema.com",
         "senha": None,
         "telefone": None,
-        "perfil": "OPERADOR",
+        "perfil": "GESTOR",
     })
     assert updated.status_code == 200
 
@@ -414,7 +414,7 @@ def test_delete_organizacao_with_users_is_blocked(client, admin_headers):
         "email": "usuario.vinculado@sistema.com",
         "senha": "123456",
         "telefone": None,
-        "perfil": "OPERADOR",
+        "perfil": "GESTOR",
         "organizacao_id": created["id"],
     })
     assert user.status_code == 201
@@ -430,7 +430,7 @@ def test_delete_user_without_links_removes_record(client, admin_headers):
         "email": "sem.vinculo@sistema.com",
         "senha": "123456",
         "telefone": None,
-        "perfil": "OPERADOR",
+        "perfil": "GESTOR",
     }).json()
     response = client.delete(f'/api/usuarios/{created["id"]}', headers=admin_headers)
     assert response.status_code == 204
@@ -440,11 +440,8 @@ def test_delete_user_without_links_removes_record(client, admin_headers):
 
 
 def test_delete_user_with_links_is_blocked(client, admin_headers):
-    linked_user = next(
-        item for item in client.get("/api/usuarios", headers=admin_headers).json()
-        if item["email"] == "operador1@sistema.com"
-    )
-    response = client.delete(f'/api/usuarios/{linked_user["id"]}', headers=admin_headers)
+    delivery = client.get("/api/entregas", headers=admin_headers).json()[0]
+    response = client.delete(f'/api/usuarios/{delivery["entregador_id"]}', headers=admin_headers)
     assert response.status_code == 409
     assert response.json()["detail"] == "Usuário está em uso e não pode ser excluído"
 

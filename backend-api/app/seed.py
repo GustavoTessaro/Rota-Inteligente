@@ -18,14 +18,14 @@ def seed_database(db: Session) -> None:
     users = [
         Usuario(nome="Administrador do Sistema", email="admin@sistema.com",
                 senha_hash=hash_password("123456"), perfil=Perfil.ADMIN),
-        Usuario(nome="Operador Um", email="operador1@sistema.com",
-                senha_hash=hash_password("123456"), perfil=Perfil.OPERADOR),
-        Usuario(nome="Operador Dois", email="operador2@sistema.com",
-                senha_hash=hash_password("123456"), perfil=Perfil.OPERADOR),
+        Usuario(nome="Gestor Um", email="gestor1@sistema.com",
+                senha_hash=hash_password("123456"), perfil=Perfil.GESTOR),
+        Usuario(nome="Gestor Dois", email="gestor2@sistema.com",
+                senha_hash=hash_password("123456"), perfil=Perfil.GESTOR),
     ]
     users += [
-        Usuario(nome=f"Entregador {i}", email=f"entregador{i}@sistema.com",
-                senha_hash=hash_password("123456"), perfil=Perfil.ENTREGADOR)
+        Usuario(nome=f"Motorista {i}", email=f"motorista{i}@sistema.com",
+                senha_hash=hash_password("123456"), perfil=Perfil.MOTORISTA)
         for i in range(1, 4)
     ]
     db.add_all(users)

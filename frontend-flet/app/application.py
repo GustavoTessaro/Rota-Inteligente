@@ -82,7 +82,7 @@ class DeliveryApp:
         self.page.update()
 
     def show_shell(self):
-        driver = self.user["perfil"] == "ENTREGADOR"
+        driver = self.user["perfil"] == "MOTORISTA"
         admin_user = self.user["perfil"] == "ADMIN"
         destinations = [
             ft.NavigationRailDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
@@ -91,7 +91,12 @@ class DeliveryApp:
         if not driver:
             destinations += [
                 ft.NavigationRailDestination(icon=ft.Icons.PEOPLE, label="Clientes"),
-                ft.NavigationRailDestination(icon=ft.Icons.BUILDING, label="Organizações"),
+            ]
+            if admin_user:
+                destinations += [
+                    ft.NavigationRailDestination(icon=ft.Icons.BUILDING, label="Organizações"),
+                ]
+            destinations += [
                 ft.NavigationRailDestination(icon=ft.Icons.RECEIPT_LONG, label="Pedidos"),
                 ft.NavigationRailDestination(icon=ft.Icons.INVENTORY_2, label="Produtos"),
                 ft.NavigationRailDestination(icon=ft.Icons.BAR_CHART, label="Relatórios"),
@@ -101,9 +106,12 @@ class DeliveryApp:
         def navigate(event):
             actions = [self.dashboard_view, self.deliveries_view]
             if not driver:
+                actions += [self.clients_view]
+                if admin_user:
+                    actions += [self.organizations_view]
                 actions += [
-                    self.clients_view, self.organizations_view, self.orders_view,
-                    self.products_view, self.reports_view, self.users_view,
+                    self.orders_view, self.products_view,
+                    self.reports_view, self.users_view,
                 ]
             actions[event.control.selected_index]()
 
@@ -152,7 +160,7 @@ class DeliveryApp:
         )
 
     def dashboard_view(self):
-        if self.user["perfil"] == "ENTREGADOR":
+        if self.user["perfil"] == "MOTORISTA":
             self.deliveries_view()
             return
         try:
@@ -183,7 +191,7 @@ class DeliveryApp:
     def deliveries_view(self, offset=0, status_filter=""):
         page_size = 10
         try:
-            if self.user["perfil"] == "ENTREGADOR":
+            if self.user["perfil"] == "MOTORISTA":
                 path = "/entregas/minhas"
             else:
                 params = [f"limit={page_size}", f"offset={offset}"]
@@ -191,7 +199,7 @@ class DeliveryApp:
                     params.append(f"status={status_filter}")
                 path = "/entregas?" + "&".join(params)
             deliveries = self.api.request("GET", path)
-            if self.user["perfil"] == "ENTREGADOR" and status_filter:
+            if self.user["perfil"] == "MOTORISTA" and status_filter:
                 deliveries = [item for item in deliveries if item["status"] == status_filter]
             status_dropdown = ft.Dropdown(
                 label="Status",
@@ -205,7 +213,7 @@ class DeliveryApp:
             for item in deliveries:
                 status = item["status"]
                 actions = []
-                if self.user["perfil"] in ("ADMIN", "OPERADOR", "ENTREGADOR"):
+                if self.user["perfil"] in ("ADMIN", "GESTOR", "MOTORISTA"):
                     actions.append(ft.PopupMenuButton(
                         icon=ft.Icons.EDIT,
                         tooltip="Atualizar status",
@@ -223,7 +231,7 @@ class DeliveryApp:
                         ft.Icons.EDIT_NOTE, tooltip="Editar entrega",
                         on_click=lambda _, delivery=item: self.delivery_dialog(delivery),
                     ))
-                    if self.user["perfil"] != "ENTREGADOR":
+                    if self.user["perfil"] != "MOTORISTA":
                         actions.append(ft.IconButton(
                             ft.Icons.DELETE, tooltip="Excluir entrega",
                             icon_color=ft.Colors.RED_700,
@@ -252,13 +260,13 @@ class DeliveryApp:
             self.content.controls = [
                 self.header_bar("Entregas", f"{len(deliveries)} registro(s)", [
                     ft.FilledButton("Nova entrega", icon=ft.Icons.ADD,
-                                    visible=self.user["perfil"] != "ENTREGADOR",
+                                    visible=self.user["perfil"] != "MOTORISTA",
                                     on_click=lambda _: self.delivery_dialog()),
                     self.page_controls(
                         lambda _: self.deliveries_view(max(0, offset - page_size), status_filter),
                         lambda _: self.deliveries_view(offset + page_size, status_filter),
                         can_previous=offset > 0,
-                        can_next=len(deliveries) == page_size and self.user["perfil"] != "ENTREGADOR",
+                        can_next=len(deliveries) == page_size and self.user["perfil"] != "MOTORISTA",
                     ),
                 ]),
                 ft.Container(ft.Row([
@@ -325,9 +333,9 @@ class DeliveryApp:
             options=[self.option(item["id"], item["numero_pedido"]) for item in orders if item["status"] != "CANCELADO"],
         )
         driver = ft.Dropdown(
-            label="Entregador",
+            label="Motorista",
             value=str(delivery["entregador_id"]) if delivery and delivery["entregador_id"] else None,
-            options=[self.option(item["id"], item["nome"]) for item in users if item["perfil"] == "ENTREGADOR" and item["ativo"]],
+            options=[self.option(item["id"], item["nome"]) for item in users if item["perfil"] == "MOTORISTA" and item["ativo"]],
         )
         origin = ft.Dropdown(
             label="Endereço de origem",
@@ -1335,8 +1343,8 @@ class DeliveryApp:
         phone = ft.TextField(label="Telefone", value=(user or {}).get("telefone") or "")
         profile = ft.Dropdown(
             label="Perfil",
-            value=(user or {}).get("perfil", "OPERADOR"),
-            options=[self.option(value) for value in ["ADMIN", "OPERADOR", "ENTREGADOR"]],
+            value=(user or {}).get("perfil", "GESTOR"),
+            options=[self.option(value) for value in ["ADMIN", "GESTOR", "MOTORISTA"]],
         )
         organization = ft.Dropdown(
             label="Organização",
