@@ -51,6 +51,10 @@ alembic upgrade head
 
 Em `APP_ENV=development` ou `APP_ENV=test`, a API ainda cria tabelas automaticamente na inicializacao para facilitar testes locais. Em outros ambientes, use Alembic.
 
+> Observação: a integração de mapas usa `/api/maps/config`, `/api/maps/directions` e `/api/maps/optimize`.
+> Se não houver `GOOGLE_MAPS_API_KEY` ou `GOOGLE_MAPS_RESTRICTED_KEY` configurados, algumas funcionalidades de mapa podem não estar disponíveis.
+> Também não há suporte a WebSocket de rastreamento em tempo real no backend atual; o modelo `RotaPosicao` existe, mas não há endpoints públicos para posições em tempo real.
+
 ### Aplicativo Flet
 
 ```powershell
