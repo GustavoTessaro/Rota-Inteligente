@@ -2,9 +2,15 @@ from typing import Any, Dict, List, Optional
 import json
 import time
 import httpx
-import jwt
-
 from ..config import settings
+
+# prefer google-auth for service account credentials
+try:
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request as GoogleAuthRequest
+except Exception:  # pragma: no cover - optional dependency
+    service_account = None
+    GoogleAuthRequest = None
 
 
 class GoogleRouteOptimizationService:
@@ -27,37 +33,27 @@ class GoogleRouteOptimizationService:
             return self._token
         if not self.sa_file:
             return None
-        try:
-            with open(self.sa_file, 'r', encoding='utf-8') as f:
-                sa = json.load(f)
-        except Exception:
-            return None
 
-        now = int(time.time())
-        header = {"alg": "RS256", "typ": "JWT"}
-        issued_at = now
-        expiry = now + 3600
-        payload = {
-            "iss": sa.get("client_email"),
-            "scope": self.scope,
-            "aud": "https://oauth2.googleapis.com/token",
-            "exp": expiry,
-            "iat": issued_at,
-        }
-        signed = jwt.encode(payload, sa.get("private_key"), algorithm="RS256", headers=header)
-        data = {"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": signed}
-        try:
-            r = httpx.post("https://oauth2.googleapis.com/token", data=data, timeout=10)
-            r.raise_for_status()
-            j = r.json()
-            token = j.get("access_token")
-            expires_in = int(j.get("expires_in", 3600))
-            if token:
-                self._token = token
-                self._token_exp = time.time() + expires_in
-                return token
-        except Exception:
-            return None
+        # If google-auth is available, use it to load service account and refresh token
+        if service_account and GoogleAuthRequest:
+            try:
+                creds = service_account.Credentials.from_service_account_file(self.sa_file, scopes=[self.scope])
+                # refresh to obtain access token
+                creds.refresh(GoogleAuthRequest())
+                token = getattr(creds, 'token', None)
+                expiry = getattr(creds, 'expiry', None)
+                if token:
+                    self._token = token
+                    if expiry:
+                        self._token_exp = expiry.timestamp() if hasattr(expiry, 'timestamp') else time.time() + 3600
+                    else:
+                        self._token_exp = time.time() + 3600
+                    return token
+            except Exception:
+                return None
+
+        # Fallback: no google-auth available
+        return None
 
     def optimize_route(self,
                        origin: Optional[Dict[str, float]],
