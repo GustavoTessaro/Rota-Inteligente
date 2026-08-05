@@ -5,6 +5,17 @@ from .services import get_google_maps_service
 router = APIRouter(prefix="/api/maps")
 
 
+@router.get("/config")
+def maps_config():
+    """Return public maps configuration (no secret keys)."""
+    from .config import settings
+    # Only return the restricted key intended for browser use (if provided)
+    return {
+        "maps_default_center": settings.maps_default_center,
+        "google_maps_key": settings.google_maps_restricted_key or None,
+    }
+
+
 class GeocodeIn(BaseModel):
     address: str
 

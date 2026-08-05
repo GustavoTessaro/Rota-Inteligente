@@ -7,7 +7,41 @@
     <style>
       html, body, #map { height: 100%; margin: 0; padding: 0; }
     </style>
-    <script src="https://maps.googleapis.com/maps/api/js?key=REPLACE_KEY&libraries=places,geometry"></script>
+    <script>
+      // The Maps JS API script will be injected by the host when a key is available.
+      // Host should postMessage { action: 'loadKey', key: 'RESTRICTED_KEY' } to load the script.
+      function loadMapsScript(key) {
+        if (!key) return;
+        const s = document.createElement('script');
+        s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places,geometry`;
+        s.defer = true;
+        s.onload = () => { if (window.init) window.init(); };
+        document.head.appendChild(s);
+      }
+      window.INITIAL_MARKERS = window.INITIAL_MARKERS || [];
+      // store markers and polylines for later clearing
+      window._mapMarkers = [];
+      window._mapPolylines = [];
+
+      function clearMap() {
+        window._mapMarkers.forEach(m => m.setMap(null));
+        window._mapMarkers = [];
+        window._mapPolylines.forEach(p => p.setMap(null));
+        window._mapPolylines = [];
+      }
+
+      window.addEventListener('message', (ev) => {
+        try {
+          const payload = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+          if (payload.action === 'loadKey') loadMapsScript(payload.key);
+          if (payload.action === 'clear') clearMap();
+          if (payload.action === 'center' && payload.lat && payload.lng && window.map) {
+            window.map.setCenter({ lat: payload.lat, lng: payload.lng });
+            if (payload.zoom) window.map.setZoom(payload.zoom);
+          }
+        } catch(e) { console.error(e); }
+      }, false);
+    </script>
     <script>
       // optional initial markers can be injected by setting window.INITIAL_MARKERS before load
       window.INITIAL_MARKERS = window.INITIAL_MARKERS || [];
@@ -25,13 +59,16 @@
         }
       }
       function addMarker(lat, lng, title) {
-        new google.maps.Marker({ position: { lat, lng }, map, title });
+        const marker = new google.maps.Marker({ position: { lat, lng }, map, title });
+        window._mapMarkers.push(marker);
+        return marker;
       }
       function drawPolyline(encoded) {
         try {
           const path = google.maps.geometry.encoding.decodePath(encoded);
           const poly = new google.maps.Polyline({ path, strokeColor: '#1976D2', strokeOpacity: 0.9, strokeWeight: 5 });
           poly.setMap(map);
+          window._mapPolylines.push(poly);
           const bounds = new google.maps.LatLngBounds();
           path.forEach(p => bounds.extend(p));
           map.fitBounds(bounds);
