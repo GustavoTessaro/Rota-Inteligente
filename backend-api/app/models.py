@@ -69,7 +69,10 @@ class Organizacao(TimestampMixin, Base):
     cnpj: Mapped[str] = mapped_column(String(14), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(150))
     telefone: Mapped[str | None] = mapped_column(String(20))
+    # Legacy free-text address kept for compatibility. Prefer endereco_id.
     endereco: Mapped[str] = mapped_column(String(255))
+    endereco_id: Mapped[int | None] = mapped_column(ForeignKey("enderecos.id"), index=True)
+    endereco_rel: Mapped[Endereco | None] = relationship("Endereco", foreign_keys=[endereco_id])
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     usuarios: Mapped[list["Usuario"]] = relationship(back_populates="organizacao", cascade="all, delete-orphan")
     veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="organizacao", cascade="all, delete-orphan")
@@ -245,6 +248,12 @@ class Endereco(TimestampMixin, Base):
     cep: Mapped[str] = mapped_column(String(10))
     referencia: Mapped[str | None] = mapped_column(String(255))
     tipo: Mapped[str] = mapped_column(String(20), default="OUTRO")
+    # Geolocation and formatted address fields
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
+    pais: Mapped[str | None] = mapped_column(String(100))
+    endereco_formatado: Mapped[str | None] = mapped_column(Text)
+    place_id: Mapped[str | None] = mapped_column(String(255))
 
 
 class Produto(TimestampMixin, Base):

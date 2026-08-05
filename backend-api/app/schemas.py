@@ -75,6 +75,7 @@ class OrganizacaoCreate(BaseModel):
     email: EmailStr
     telefone: str | None = None
     endereco: str = Field(min_length=5, max_length=255)
+    endereco_id: int | None = None
     ativo: bool = True
 
     @field_validator("nome", "endereco", mode="before")
@@ -110,6 +111,7 @@ class OrganizacaoOut(OrganizacaoCreate, ORMModel):
     id: int
     criado_em: datetime
     atualizado_em: datetime
+    endereco_id: int | None = None
 
 
 class VeiculoCreate(BaseModel):
@@ -341,6 +343,11 @@ class EnderecoCreate(BaseModel):
     cep: str = Field(min_length=8, max_length=10)
     referencia: str | None = None
     tipo: str = "OUTRO"
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+    pais: str | None = None
+    endereco_formatado: str | None = None
+    place_id: str | None = None
 
     @field_validator("logradouro", "numero", "complemento", "bairro", "cidade", "estado", "cep", "referencia", "tipo", mode="before")
     @classmethod
@@ -375,6 +382,11 @@ class EnderecoCreate(BaseModel):
 class EnderecoOut(EnderecoCreate, ORMModel):
     id: int
     cliente_id: int
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
+    pais: str | None = None
+    endereco_formatado: str | None = None
+    place_id: str | None = None
 
 
 class ProdutoCreate(BaseModel):

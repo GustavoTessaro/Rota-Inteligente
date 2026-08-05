@@ -462,6 +462,19 @@ class DeliveryApp:
             options=[self.option(str(item["id"]), item["nome"]) for item in organizations],
             visible=self.user["perfil"] == "ADMIN",
         )
+        # allow selecting an address from organization if provided
+        org_address = None
+        if organization.visible and organizations:
+            # if organization has endereco_id, fetch and display formatted address
+            for org in organizations:
+                if org.get("endereco_id"):
+                    try:
+                        addr = self.api.request("GET", f"/clientes/{org['id']}/enderecos")
+                    except ApiError:
+                        addr = []
+                    if addr:
+                        org_address = addr[0]
+                        break
         vehicle = ft.Dropdown(
             label="Veículo",
             value=None,

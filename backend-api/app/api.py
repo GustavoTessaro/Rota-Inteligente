@@ -348,7 +348,12 @@ def list_organizacoes(
 
 @router.post("/organizacoes", response_model=OrganizacaoOut, status_code=201)
 def create_organizacao(data: OrganizacaoCreate, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
-    organizacao = Organizacao(**data.model_dump())
+    # If endereco_id provided, ensure it exists and keep legacy endereco text for compatibility
+    if data.endereco_id is not None:
+        get_or_404(db, Endereco, data.endereco_id)
+    organizacao = Organizacao(**data.model_dump(exclude={"endereco_id"}))
+    if data.endereco_id is not None:
+        organizacao.endereco_id = data.endereco_id
     db.add(organizacao)
     commit(db)
     return organizacao
@@ -357,8 +362,13 @@ def create_organizacao(data: OrganizacaoCreate, db: Session = Depends(get_db), _
 @router.put("/organizacoes/{org_id}", response_model=OrganizacaoOut)
 def update_organizacao(org_id: int, data: OrganizacaoCreate, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
     organizacao = get_or_404(db, Organizacao, org_id)
-    for key, value in data.model_dump().items():
+    payload = data.model_dump()
+    endereco_id = payload.pop("endereco_id", None)
+    for key, value in payload.items():
         setattr(organizacao, key, value)
+    if endereco_id is not None:
+        get_or_404(db, Endereco, endereco_id)
+        organizacao.endereco_id = endereco_id
     commit(db)
     return organizacao
 
