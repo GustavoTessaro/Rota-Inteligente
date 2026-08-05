@@ -87,6 +87,7 @@ class DeliveryApp:
         destinations = [
             ft.NavigationRailDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
             ft.NavigationRailDestination(icon=ft.Icons.LOCAL_SHIPPING, label="Entregas"),
+            ft.NavigationRailDestination(icon=ft.Icons.DIRECTIONS_CAR, label="Veículos"),
         ]
         if not driver:
             destinations += [
@@ -104,7 +105,7 @@ class DeliveryApp:
             ]
 
         def navigate(event):
-            actions = [self.dashboard_view, self.deliveries_view]
+            actions = [self.dashboard_view, self.deliveries_view, self.vehicles_view]
             if not driver:
                 actions += [self.clients_view]
                 if admin_user:
@@ -283,6 +284,197 @@ class DeliveryApp:
             self.page.update()
         except ApiError as exc:
             self.notify(str(exc), True)
+
+    def vehicles_view(self, search="", offset=0):
+        page_size = 10
+        try:
+            params = [f"limit={page_size}", f"offset={offset}"]
+            if search.strip():
+                params.append(f"busca={quote(search.strip())}")
+            path = "/veiculos?" + "&".join(params)
+            vehicles = self.api.request("GET", path)
+            search_field = ft.TextField(
+                label="Buscar veículo",
+                value=search,
+                prefix_icon=ft.Icons.SEARCH,
+                on_submit=lambda event: self.vehicles_view(event.control.value),
+            )
+            rows = []
+            for item in vehicles:
+                actions = []
+                if self.user["perfil"] in ("ADMIN", "GESTOR"):
+                    actions.extend([
+                        ft.IconButton(
+                            ft.Icons.EDIT,
+                            tooltip="Editar veículo",
+                            on_click=lambda _, vehicle=item: self.vehicle_dialog(vehicle),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.DELETE,
+                            tooltip="Excluir veículo",
+                            icon_color=ft.Colors.RED_700,
+                            on_click=lambda _, vehicle=item: self.confirm_delete_vehicle(vehicle),
+                        ),
+                    ])
+                rows.append(ft.ListTile(
+                    leading=ft.Icon(ft.Icons.DIRECTIONS_CAR, color=STATUS_COLORS.get(item["status"], ft.Colors.GREY)),
+                    title=ft.Text(f'{item["placa"]} · {item["status"].replace("_", " ")}'),
+                    subtitle=ft.Text(
+                        f'{item["tipo"]} · {item["marca"]} {item["modelo"]} · {item["ano"]} · {item["cor"]} · '
+                        f'{item["capacidade_carga"]} kg · {item["capacidade_volume"]} m³ · '
+                        f'{"Ativo" if item["ativo"] else "Inativo"}'
+                    ),
+                    trailing=ft.Row(actions, tight=True),
+                ))
+            self.content.controls = [
+                self.header_bar("Veículos", f"{len(vehicles)} veículo(s)", [
+                    ft.FilledButton("Novo veículo", icon=ft.Icons.ADD,
+                                    visible=self.user["perfil"] != "MOTORISTA",
+                                    on_click=lambda _: self.vehicle_dialog()),
+                    self.page_controls(
+                        lambda _: self.vehicles_view(max(0, offset - page_size), search),
+                        lambda _: self.vehicles_view(offset + page_size, search),
+                        can_previous=offset > 0,
+                        can_next=len(vehicles) == page_size,
+                    ),
+                ]),
+                ft.Container(ft.Row([
+                    search_field,
+                    ft.IconButton(ft.Icons.SEARCH, tooltip="Buscar", on_click=lambda _: self.vehicles_view(search_field.value, 0)),
+                    ft.IconButton(ft.Icons.CLEAR, tooltip="Limpar", on_click=lambda _: self.vehicles_view()),
+                ]), padding=20),
+                ft.Container(ft.Column(rows or [ft.Text("Nenhum veículo encontrado.")]), padding=10),
+            ]
+            self.page.update()
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
+    def vehicle_dialog(self, vehicle=None):
+        try:
+            users = self.api.request("GET", "/usuarios?limit=100&offset=0")
+            organizations = self.api.request("GET", "/organizacoes?limit=100&offset=0") if self.user["perfil"] == "ADMIN" else []
+        except ApiError as exc:
+            self.notify(str(exc), True)
+            return
+
+        license_plate = ft.TextField(label="Placa", value=(vehicle or {}).get("placa", ""))
+        model = ft.TextField(label="Modelo", value=(vehicle or {}).get("modelo", ""))
+        brand = ft.TextField(label="Marca", value=(vehicle or {}).get("marca", ""))
+        year = ft.TextField(label="Ano", value=str((vehicle or {}).get("ano", "")))
+        color = ft.TextField(label="Cor", value=(vehicle or {}).get("cor", ""))
+        capacity_weight = ft.TextField(label="Capacidade de carga (kg)", value=str((vehicle or {}).get("capacidade_carga") or "0"))
+        capacity_volume = ft.TextField(label="Capacidade de volume (m³)", value=str((vehicle or {}).get("capacidade_volume") or "0"))
+        type_field = ft.Dropdown(
+            label="Tipo",
+            value=(vehicle or {}).get("tipo", "CARRO"),
+            options=[self.option(value) for value in ["CARRO", "VAN", "UTILITARIO", "CAMINHAO", "CARRETA", "OUTRO"]],
+        )
+        status_field = ft.Dropdown(
+            label="Status",
+            value=(vehicle or {}).get("status", "DISPONIVEL"),
+            options=[self.option(value) for value in ["DISPONIVEL", "EM_ROTTA", "MANUTENCAO"]],
+        )
+        mileage = ft.TextField(label="Quilometragem", value=str((vehicle or {}).get("quilometragem") or "0"))
+        active = ft.Checkbox(label="Ativo", value=(vehicle or {}).get("ativo", True))
+        driver = ft.Dropdown(
+            label="Motorista",
+            value=str((vehicle or {}).get("motorista_id")) if (vehicle or {}).get("motorista_id") else None,
+            options=[self.option(item["id"], item["nome"]) for item in users if item["perfil"] == "MOTORISTA" and item["ativo"]],
+        )
+        organization = ft.Dropdown(
+            label="Organização",
+            value=str((vehicle or {}).get("organizacao_id")) if (vehicle or {}).get("organizacao_id") else None,
+            options=[self.option(item["id"], item["nome"]) for item in organizations],
+            visible=self.user["perfil"] == "ADMIN",
+        )
+
+        def save(_):
+            fields_to_validate = [license_plate, model, brand, year, color, capacity_weight, capacity_volume, mileage]
+            if self.user["perfil"] == "ADMIN":
+                fields_to_validate.append(organization)
+            self.clear_errors(*fields_to_validate, driver)
+            valid = all([
+                self.require_text(license_plate, "Informe a placa do veículo.", 5),
+                self.require_text(model, "Informe o modelo.", 2),
+                self.require_text(brand, "Informe a marca.", 2),
+                self.require_text(year, "Informe o ano.", 4),
+                self.require_text(color, "Informe a cor.", 2),
+                self.validate_positive_number(capacity_weight, "Informe a carga maior ou igual a zero."),
+                self.validate_positive_number(capacity_volume, "Informe o volume maior ou igual a zero."),
+                self.validate_positive_number(mileage, "Informe uma quilometragem maior ou igual a zero.", allow_zero=True),
+            ])
+            if self.user["perfil"] == "ADMIN" and organization.visible and not organization.value:
+                self.set_error(organization, "Selecione a organização.")
+                valid = False
+            if not valid:
+                self.page.update()
+                self.notify("Corrija os campos destacados.", True)
+                return
+            try:
+                payload = {
+                    "placa": license_plate.value.strip(),
+                    "modelo": model.value.strip(),
+                    "marca": brand.value.strip(),
+                    "ano": int(year.value),
+                    "cor": color.value.strip(),
+                    "capacidade_carga": self.money(capacity_weight.value),
+                    "capacidade_volume": self.money(capacity_volume.value),
+                    "tipo": type_field.value,
+                    "status": status_field.value,
+                    "quilometragem": int(mileage.value),
+                    "ativo": active.value,
+                    "motorista_id": int(driver.value) if driver.value else None,
+                }
+                if self.user["perfil"] == "ADMIN":
+                    payload["organizacao_id"] = int(organization.value) if organization.value else None
+                if vehicle:
+                    self.api.request("PUT", f'/veiculos/{vehicle["id"]}', json=payload)
+                    message = "Veículo atualizado."
+                else:
+                    self.api.request("POST", "/veiculos", json=payload)
+                    message = "Veículo cadastrado."
+                dialog.open = False
+                self.notify(message)
+                self.vehicles_view()
+            except ApiError as exc:
+                dialog.open = False
+                self.show_error_dialog(str(exc), "Não foi possível salvar")
+            except ValueError:
+                self.notify("Informe valores numéricos válidos para ano, carga, volume e quilometragem.", True)
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Editar veículo" if vehicle else "Novo veículo"),
+            content=ft.Column([
+                license_plate, model, brand, year, color,
+                capacity_weight, capacity_volume, type_field, status_field, mileage,
+                driver, organization if self.user["perfil"] == "ADMIN" else ft.Row(),
+                active,
+            ], tight=True, width=440),
+            actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                     ft.FilledButton("Salvar", on_click=save)],
+        )
+        self.open_dialog(dialog)
+
+    def confirm_delete_vehicle(self, vehicle):
+        def delete(_):
+            try:
+                self.api.request("DELETE", f'/veiculos/{vehicle["id"]}')
+                dialog.open = False
+                self.notify("Veículo excluído.")
+                self.vehicles_view()
+            except ApiError as exc:
+                dialog.open = False
+                self.show_error_dialog(str(exc), "Não foi possível excluir")
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Excluir veículo"),
+            content=ft.Text(f'Deseja excluir o veículo {vehicle["placa"]} ({vehicle["modelo"]})?'),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.FilledButton("Excluir", icon=ft.Icons.DELETE, on_click=delete),
+            ],
+        )
+        self.open_dialog(dialog)
 
     def update_status(self, delivery_id, status):
         try:

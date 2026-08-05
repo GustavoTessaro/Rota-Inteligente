@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import (
-    Cliente, Endereco, Entrega, HistoricoEntrega, Pedido, PedidoItem, Perfil,
-    Prioridade, Produto, StatusEntrega, Usuario,
+    Cliente, Endereco, Entrega, HistoricoEntrega, Organizacao, Pedido, PedidoItem,
+    Perfil, Prioridade, Produto, StatusEntrega, StatusVeiculo, TipoVeiculo, Usuario, Veiculo,
 )
 from .security import hash_password
 

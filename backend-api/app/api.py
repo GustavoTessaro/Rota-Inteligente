@@ -136,6 +136,21 @@ def ensure_manageable_user_payload(current: Usuario, data):
     data.organizacao_id = current.organizacao_id
 
 
+def ensure_user_management_scope(current: Usuario, target: Usuario):
+    if current.perfil == Perfil.ADMIN:
+        return
+    if current.perfil != Perfil.GESTOR:
+        raise HTTPException(403, "Perfil sem permissão para esta operação")
+    if current.organizacao_id is None:
+        raise HTTPException(403, "Gestor sem organização não pode gerir usuários")
+    if target.perfil == Perfil.ADMIN:
+        raise HTTPException(403, "Gestor não pode criar ou alterar usuários com perfil ADMIN")
+    if target.organizacao_id is not None and target.organizacao_id != current.organizacao_id:
+        raise HTTPException(403, "Gestor só pode gerir usuários de sua organização")
+    if target.organizacao_id is None:
+        target.organizacao_id = current.organizacao_id
+
+
 def order_has_delivery(db: Session, order_id: int) -> bool:
     return bool(db.scalar(select(func.count()).select_from(Entrega).where(Entrega.pedido_id == order_id)))
 
@@ -302,9 +317,6 @@ def update_vehicle(vehicle_id: int, data: VeiculoUpdate, db: Session = Depends(g
 def delete_vehicle(vehicle_id: int, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
     vehicle = get_or_404(db, Veiculo, vehicle_id)
     ensure_vehicle_access_scope(user, vehicle)
-    linked_deliveries = db.scalar(select(func.count()).select_from(Entrega).where(Entrega.entregador_id == vehicle.motorista_id)) if vehicle.motorista_id else 0
-    if linked_deliveries:
-        raise HTTPException(409, "Veículo está vinculado a entregas e não pode ser excluído")
     db.delete(vehicle)
     commit(db)
 

@@ -1,6 +1,7 @@
 import enum
 from datetime import datetime
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -57,7 +58,7 @@ class Usuario(TimestampMixin, Base):
     perfil: Mapped[Perfil] = mapped_column(Enum(Perfil))
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     organizacao_id: Mapped[int | None] = mapped_column(ForeignKey("organizacoes.id"), index=True)
-    organizacao: Mapped["Organizacao" | None] = relationship(back_populates="usuarios")
+    organizacao: Mapped[Optional["Organizacao"]] = relationship(back_populates="usuarios")
     veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="motorista")
 
 
@@ -189,7 +190,7 @@ class Entrega(TimestampMixin, Base):
     entregador: Mapped[Usuario | None] = relationship()
     historico: Mapped[list["HistoricoEntrega"]] = relationship(cascade="all, delete-orphan")
     ocorrencias: Mapped[list["Ocorrencia"]] = relationship(cascade="all, delete-orphan")
-    comprovante: Mapped["ComprovanteEntrega | None"] = relationship(cascade="all, delete-orphan")
+    comprovante: Mapped[Optional["ComprovanteEntrega"]] = relationship(cascade="all, delete-orphan")
 
 
 class HistoricoEntrega(Base):

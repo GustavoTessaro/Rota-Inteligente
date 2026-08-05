@@ -149,6 +149,98 @@ def test_delete_product_with_orders_is_blocked(client, admin_headers):
     assert response.json()["detail"] == "Produto está em uso e não pode ser excluído"
 
 
+def test_vehicle_crud_and_list(client, admin_headers):
+    organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
+    assert organizations
+    organization_id = organizations[0]["id"]
+    users = client.get("/api/usuarios?limit=100&offset=0", headers=admin_headers).json()
+    driver = next((item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"]), None)
+
+    payload = {
+        "placa": "TEST123",
+        "modelo": "Teste 1",
+        "marca": "Teste",
+        "ano": 2024,
+        "cor": "Branco",
+        "capacidade_carga": 1000,
+        "capacidade_volume": 10,
+        "tipo": "VAN",
+        "status": "DISPONIVEL",
+        "quilometragem": 100,
+        "ativo": True,
+        "organizacao_id": organization_id,
+        "motorista_id": driver["id"] if driver else None,
+    }
+    response = client.post("/api/veiculos", headers=admin_headers, json=payload)
+    assert response.status_code == 201
+    created = response.json()
+    assert created["placa"] == "TEST123"
+    assert created["organizacao_id"] == organization_id
+
+    response = client.get(f'/api/veiculos/{created["id"]}', headers=admin_headers)
+    assert response.status_code == 200
+    assert response.json()["placa"] == "TEST123"
+
+    updated = client.put(
+        f'/api/veiculos/{created["id"]}',
+        headers=admin_headers,
+        json={**payload, "cor": "Preto", "ativo": False},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["cor"] == "Preto"
+    assert updated.json()["ativo"] is False
+
+    response = client.delete(f'/api/veiculos/{created["id"]}', headers=admin_headers)
+    assert response.status_code == 204
+
+    vehicles = client.get("/api/veiculos?limit=10&offset=0", headers=admin_headers).json()
+    assert all(item["id"] != created["id"] for item in vehicles)
+
+
+def test_delete_vehicle_without_driver(client, admin_headers):
+    organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
+    organization_id = organizations[0]["id"]
+    response = client.post("/api/veiculos", headers=admin_headers, json={
+        "placa": "NODEL1",
+        "modelo": "Teste 2",
+        "marca": "Teste",
+        "ano": 2024,
+        "cor": "Azul",
+        "capacidade_carga": 500,
+        "capacidade_volume": 5,
+        "tipo": "CARRO",
+        "status": "DISPONIVEL",
+        "quilometragem": 50,
+        "ativo": True,
+        "organizacao_id": organization_id,
+        "motorista_id": None,
+    })
+    assert response.status_code == 201
+    created = response.json()
+
+    deleted = client.delete(f'/api/veiculos/{created["id"]}', headers=admin_headers)
+    assert deleted.status_code == 204
+
+
+def test_list_vehicles_supports_pagination(client, admin_headers):
+    response = client.get("/api/veiculos?limit=1&offset=0", headers=admin_headers)
+    assert response.status_code == 200
+    assert len(response.json()) <= 1
+
+
+def test_get_vehicle_requires_existing_record(client, admin_headers):
+    response = client.get("/api/veiculos/99999", headers=admin_headers)
+    assert response.status_code == 404
+
+
+def test_delete_vehicle_with_linked_delivery_is_blocked(client, admin_headers):
+    vehicle = client.get("/api/veiculos", headers=admin_headers).json()[0]
+    response = client.delete(f'/api/veiculos/{vehicle["id"]}', headers=admin_headers)
+    assert response.status_code in (204, 409)
+    if response.status_code == 409:
+        assert response.json()["detail"] == "Veículo está vinculado a entregas e não pode ser excluído"
+
+
 def test_delete_address_without_links_removes_record(client, admin_headers):
     created_client = client.post("/api/clientes", headers=admin_headers, json={
         "nome": "Cliente Endereco Livre",
