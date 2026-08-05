@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+    <meta charset="utf-8" />
+    <title>Mapa - Rota Inteligente</title>
+    <style>
+      html, body, #map { height: 100%; margin: 0; padding: 0; }
+    </style>
+    <script src="https://maps.googleapis.com/maps/api/js?key=REPLACE_KEY&libraries=places,geometry"></script>
+    <script>
+      // optional initial markers can be injected by setting window.INITIAL_MARKERS before load
+      window.INITIAL_MARKERS = window.INITIAL_MARKERS || [];
+    </script>
+  </head>
+  <body>
+    <div id="map"></div>
+    <script>
+      let map;
+      function init() {
+        const center = { lat: -23.55052, lng: -46.633308 };
+        map = new google.maps.Map(document.getElementById('map'), { center, zoom: 12 });
+        if (Array.isArray(window.INITIAL_MARKERS) && window.INITIAL_MARKERS.length) {
+          window.INITIAL_MARKERS.forEach(m => addMarker(m.lat, m.lng, m.title));
+        }
+      }
+      function addMarker(lat, lng, title) {
+        new google.maps.Marker({ position: { lat, lng }, map, title });
+      }
+      function drawPolyline(encoded) {
+        try {
+          const path = google.maps.geometry.encoding.decodePath(encoded);
+          const poly = new google.maps.Polyline({ path, strokeColor: '#1976D2', strokeOpacity: 0.9, strokeWeight: 5 });
+          poly.setMap(map);
+          const bounds = new google.maps.LatLngBounds();
+          path.forEach(p => bounds.extend(p));
+          map.fitBounds(bounds);
+        } catch(e) { console.error('drawPolyline', e); }
+      }
+      window.addEventListener('message', (ev) => {
+        try {
+          const payload = typeof ev.data === 'string'? JSON.parse(ev.data) : ev.data;
+          if (payload.action === 'init') init();
+          if (payload.action === 'markers') {
+            payload.markers.forEach(m => addMarker(m.lat, m.lng, m.title));
+          }
+          if (payload.action === 'polyline') drawPolyline(payload.encoded);
+        } catch(e) { console.error(e); }
+      }, false);
+      window.onload = init;
+    </script>
+  </body>
+</html>

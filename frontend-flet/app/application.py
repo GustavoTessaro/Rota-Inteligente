@@ -4,6 +4,7 @@ from urllib.parse import quote
 import flet as ft
 
 from .api_client import ApiClient, ApiError
+from .map_view import MapView
 
 
 STATUS_COLORS = {
@@ -250,6 +251,18 @@ class DeliveryApp:
                 for item in data.get("proximas_rotas", [])
             ]
 
+            map_control = None
+            if routes:
+                first = routes[0]
+                markers = []
+                for entrega in first.get("entregas", []):
+                    endereco = entrega.get("endereco") or {}
+                    lat = endereco.get("latitude")
+                    lng = endereco.get("longitude")
+                    if lat and lng:
+                        markers.append({"lat": lat, "lng": lng, "title": f"Entrega #{entrega.get('entrega_id')}"})
+                map_control = MapView(markers=markers, height=240)
+
             self.content.controls = [
                 self.header_bar("Dashboard", "Indicadores e panorama operacional"),
                 ft.Container(ft.Row(cards, wrap=True, spacing=12), padding=20),
@@ -422,6 +435,7 @@ class DeliveryApp:
                     ft.IconButton(ft.Icons.CLEAR, tooltip="Limpar", on_click=lambda _: self.routes_view()),
                 ]), padding=20),
                 ft.Container(ft.Column(rows or [ft.Text("Nenhuma rota encontrada.")]), padding=10),
+                ft.Container(map_control, padding=10) if map_control else ft.Container(),
             ]
             self.page.update()
         except ApiError as exc:
