@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .models import (
     Cliente, Endereco, Entrega, HistoricoEntrega, Organizacao, Pedido, PedidoItem,
     Perfil, Prioridade, Produto, StatusEntrega, StatusVeiculo, TipoVeiculo, Usuario, Veiculo,
+    Rota, RotaEntrega, RotaHistorico, StatusRota, TipoEventoRota,
 )
 from .security import hash_password
 
@@ -111,4 +112,38 @@ def seed_database(db: Session) -> None:
             entrega_id=delivery.id, status_anterior=None, status_novo=status.value,
             observacao="Carga inicial", alterado_por=users[0].id,
         ))
+    db.flush()
+    route = Rota(
+        nome="Rota de Exemplo",
+        descricao="Rota inicial com uma entrega de demonstração",
+        organizacao_id=organizations[0].id,
+        veiculo_id=vehicles[0].id,
+        motorista_id=users[3].id,
+        status=StatusRota.PLANEJADA,
+        data_planejada=datetime.now() + timedelta(hours=1),
+        origem_endereco_id=addresses[0].id,
+        destino_endereco_id=addresses[1].id,
+        distancia_prevista=Decimal("20.0"),
+        duracao_prevista=Decimal("0.75"),
+        observacoes="Rota de teste",
+    )
+    route.entregas = [RotaEntrega(
+        entrega_id=1,
+        ordem_visita=1,
+        sequencia_otimizada=1,
+        prioridade=Prioridade.NORMAL,
+        janela_inicio=datetime.now() + timedelta(hours=1),
+        janela_fim=datetime.now() + timedelta(hours=3),
+        tempo_estacionamento=15,
+        peso=Decimal("10"),
+        volume=Decimal("1"),
+    )]
+    route.historico = [RotaHistorico(
+        evento=TipoEventoRota.PARTIDA,
+        status_anterior=None,
+        status_novo=StatusRota.PLANEJADA.value,
+        observacao="Rota criada",
+        alterado_por=users[0].id,
+    )]
+    db.add(route)
     db.commit()

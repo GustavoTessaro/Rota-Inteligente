@@ -4,7 +4,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from .models import Perfil, Prioridade, StatusEntrega, StatusPedido, StatusVeiculo, TipoVeiculo
+from .models import Perfil, Prioridade, StatusEntrega, StatusPedido, StatusVeiculo, StatusRota, TipoEventoRota, TipoVeiculo
 
 
 class ORMModel(BaseModel):
@@ -166,6 +166,123 @@ class VeiculoOut(ORMModel):
     motorista_id: int | None
     criado_em: datetime
     atualizado_em: datetime
+
+
+class RotaEntregaIn(BaseModel):
+    entrega_id: int
+    ordem_visita: int = Field(default=0, ge=0)
+    sequencia_otimizada: int | None = None
+    prioridade: Prioridade | None = None
+    janela_inicio: datetime | None = None
+    janela_fim: datetime | None = None
+    tempo_estacionamento: int | None = None
+    peso: Decimal | None = None
+    volume: Decimal | None = None
+
+
+class RotaEntregaOut(RotaEntregaIn, ORMModel):
+    id: int
+    rota_id: int
+
+
+class RotaHistoricoOut(ORMModel):
+    id: int
+    evento: TipoEventoRota
+    status_anterior: str | None
+    status_novo: str | None
+    observacao: str | None
+    entrega_id: int | None
+    alterado_por: int
+    criado_em: datetime
+
+
+class RotaCreate(BaseModel):
+    nome: str = Field(min_length=2, max_length=150)
+    descricao: str | None = None
+    organizacao_id: int
+    veiculo_id: int | None = None
+    motorista_id: int | None = None
+    status: StatusRota = StatusRota.PLANEJADA
+    data_planejada: datetime | None = None
+    data_inicio: datetime | None = None
+    data_conclusao: datetime | None = None
+    origem_endereco_id: int | None = None
+    destino_endereco_id: int | None = None
+    distancia_prevista: Decimal = Field(default=Decimal("0"), ge=0)
+    duracao_prevista: Decimal = Field(default=Decimal("0"), ge=0)
+    distancia_real: Decimal = Field(default=Decimal("0"), ge=0)
+    duracao_real: Decimal = Field(default=Decimal("0"), ge=0)
+    progresso_percentual: int = Field(default=0, ge=0, le=100)
+    quilometragem_inicial: int | None = None
+    quilometragem_final: int | None = None
+    combustivel_inicial: Decimal | None = None
+    combustivel_final: Decimal | None = None
+    google_route_id: str | None = None
+    google_optimization_request_id: str | None = None
+    route_geometry: str | None = None
+    observacoes: str | None = None
+    entregas: list[RotaEntregaIn] = Field(default_factory=list)
+
+    @field_validator("nome", "descricao", "observacoes", mode="before")
+    @classmethod
+    def strip_text(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    @field_validator("progresso_percentual")
+    @classmethod
+    def validate_progress(cls, value):
+        if value is None:
+            return 0
+        return value
+
+
+class RotaUpdate(RotaCreate):
+    pass
+
+
+class RotaStatusIn(BaseModel):
+    status: StatusRota
+    evento: TipoEventoRota | None = None
+    observacao: str | None = None
+    entrega_id: int | None = None
+    distancia_real: Decimal | None = None
+    duracao_real: Decimal | None = None
+    progresso_percentual: int | None = Field(default=None, ge=0, le=100)
+    quilometragem_final: int | None = None
+    combustivel_final: Decimal | None = None
+
+
+class RotaOut(ORMModel):
+    id: int
+    nome: str
+    descricao: str | None
+    organizacao_id: int
+    veiculo_id: int | None
+    motorista_id: int | None
+    status: StatusRota
+    data_planejada: datetime | None
+    data_inicio: datetime | None
+    data_conclusao: datetime | None
+    origem_endereco_id: int | None
+    destino_endereco_id: int | None
+    distancia_prevista: Decimal
+    duracao_prevista: Decimal
+    distancia_real: Decimal
+    duracao_real: Decimal
+    progresso_percentual: int
+    quilometragem_inicial: int | None
+    quilometragem_final: int | None
+    combustivel_inicial: Decimal | None
+    combustivel_final: Decimal | None
+    google_route_id: str | None
+    google_optimization_request_id: str | None
+    route_geometry: str | None
+    observacoes: str | None
+    criado_em: datetime
+    atualizado_em: datetime
+    entregas: list[RotaEntregaOut] | None = None
 
 
 class ClienteCreate(BaseModel):

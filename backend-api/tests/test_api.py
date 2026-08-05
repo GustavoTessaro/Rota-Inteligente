@@ -587,3 +587,56 @@ def test_delivery_requires_receipt_before_completion(client, admin_headers):
         f'/api/entregas/{delivery["id"]}/historico', headers=admin_headers
     ).json()
     assert history[-1]["status_novo"] == "ENTREGUE"
+
+
+def test_create_route(client, admin_headers):
+    vehicles = client.get("/api/veiculos", headers=admin_headers).json()
+    assert vehicles
+    vehicle = vehicles[0]
+    users = client.get("/api/usuarios", headers=admin_headers).json()
+    motorista = next(item for item in users if item["perfil"] == "MOTORISTA")
+    organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
+    organization = next(item for item in organizations if item["id"] == vehicle["organizacao_id"])
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
+    entrega = next(item for item in deliveries if item["status"] != "CANCELADA")
+
+    response = client.post(
+        "/api/rotas",
+        headers=admin_headers,
+        json={
+            "nome": "Rota Teste",
+            "descricao": "Rota criada no teste",
+            "organizacao_id": organization["id"],
+            "veiculo_id": vehicle["id"],
+            "motorista_id": motorista["id"],
+            "status": "PLANEJADA",
+            "entregas": [{"entrega_id": entrega["id"], "ordem_visita": 1}],
+        },
+    )
+    assert response.status_code == 201
+    rota = response.json()
+    assert rota["nome"] == "Rota Teste"
+    assert rota["organizacao_id"] == organization["id"]
+    assert rota["entregas"][0]["entrega_id"] == entrega["id"]
+
+
+def test_update_route_status_and_history(client, admin_headers):
+    routes = client.get("/api/rotas?limit=10&offset=0", headers=admin_headers).json()
+    assert routes
+    rota = routes[0]
+
+    response = client.patch(
+        f'/api/rotas/{rota["id"]}/status',
+        headers=admin_headers,
+        json={
+            "status": "EM_EXECUCAO",
+            "evento": "PARTIDA",
+            "observacao": "Iniciando a rota",
+            "progresso_percentual": 10,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "EM_EXECUCAO"
+
+    history = client.get(f'/api/rotas/{rota["id"]}/historico', headers=admin_headers).json()
+    assert any(item["status_novo"] == "EM_EXECUCAO" for item in history)

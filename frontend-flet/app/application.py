@@ -87,6 +87,7 @@ class DeliveryApp:
         destinations = [
             ft.NavigationRailDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
             ft.NavigationRailDestination(icon=ft.Icons.LOCAL_SHIPPING, label="Entregas"),
+            ft.NavigationRailDestination(icon=ft.Icons.TRIP_ORIGIN, label="Rotas"),
             ft.NavigationRailDestination(icon=ft.Icons.DIRECTIONS_CAR, label="Veículos"),
         ]
         if not driver:
@@ -105,7 +106,7 @@ class DeliveryApp:
             ]
 
         def navigate(event):
-            actions = [self.dashboard_view, self.deliveries_view, self.vehicles_view]
+            actions = [self.dashboard_view, self.deliveries_view, self.routes_view, self.vehicles_view]
             if not driver:
                 actions += [self.clients_view]
                 if admin_user:
@@ -284,6 +285,172 @@ class DeliveryApp:
             self.page.update()
         except ApiError as exc:
             self.notify(str(exc), True)
+
+    def routes_view(self, offset=0, status_filter=""):
+        page_size = 10
+        try:
+            params = [f"limit={page_size}", f"offset={offset}"]
+            if status_filter:
+                params.append(f"status={status_filter}")
+            routes = self.api.request("GET", "/rotas?" + "&".join(params))
+            status_dropdown = ft.Dropdown(
+                label="Status",
+                value=status_filter or None,
+                options=[self.option(value) for value in [
+                    "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO",
+                    "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
+                ]],
+            )
+            rows = []
+            for item in routes:
+                status = item["status"]
+                actions = [
+                    ft.IconButton(
+                        ft.Icons.INFO,
+                        tooltip="Detalhes da rota",
+                        on_click=lambda _, rota=item: self.route_details_dialog(rota),
+                    ),
+                ]
+                rows.append(ft.ListTile(
+                    leading=ft.Icon(ft.Icons.TRIP_ORIGIN, color=ft.Colors.PURPLE),
+                    title=ft.Text(f'{item["nome"]} · {status.replace("_", " ")}'),
+                    subtitle=ft.Text(
+                        f'Veículo: {item["veiculo_id"] or "-"} · Motorista: {item["motorista_id"] or "-"} '
+                        f'· Entregas: {len(item.get("entregas") or [])}'
+                    ),
+                    trailing=ft.Row(actions, tight=True),
+                ))
+            self.content.controls = [
+                self.header_bar("Rotas", f"{len(routes)} rota(s)", [
+                    ft.FilledButton("Nova rota", icon=ft.Icons.ADD,
+                                    visible=self.user["perfil"] in ("ADMIN", "GESTOR"),
+                                    on_click=lambda _: self.create_route_dialog()),
+                    self.page_controls(
+                        lambda _: self.routes_view(max(0, offset - page_size), status_filter),
+                        lambda _: self.routes_view(offset + page_size, status_filter),
+                        can_previous=offset > 0,
+                        can_next=len(routes) == page_size,
+                    ),
+                ]),
+                ft.Container(ft.Row([
+                    status_dropdown,
+                    ft.IconButton(
+                        ft.Icons.SEARCH,
+                        tooltip="Filtrar",
+                        on_click=lambda _: self.routes_view(0, status_dropdown.value or ""),
+                    ),
+                    ft.IconButton(ft.Icons.CLEAR, tooltip="Limpar", on_click=lambda _: self.routes_view()),
+                ]), padding=20),
+                ft.Container(ft.Column(rows or [ft.Text("Nenhuma rota encontrada.")]), padding=10),
+            ]
+            self.page.update()
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
+    def route_details_dialog(self, route):
+        content = ft.Column([
+            ft.Text(f'Nome: {route["nome"]}'),
+            ft.Text(f'Descrição: {route.get("descricao") or "-"}'),
+            ft.Text(f'Status: {route["status"].replace("_", " ")}'),
+            ft.Text(f'Veículo: {route.get("veiculo_id") or "-"}'),
+            ft.Text(f'Motorista: {route.get("motorista_id") or "-"}'),
+            ft.Text(f'Organização: {route.get("organizacao_id")}'),
+            ft.Text(f'Entregas: {len(route.get("entregas") or [])}'),
+        ], tight=True)
+        dialog = ft.AlertDialog(
+            title=ft.Text(f'Rota #{route["id"]}'),
+            content=content,
+            actions=[ft.TextButton("Fechar", on_click=lambda _: self.close_dialog(dialog))],
+        )
+        self.open_dialog(dialog)
+
+    def create_route_dialog(self):
+        try:
+            organizations = self.api.request("GET", "/organizacoes?limit=100&offset=0") if self.user["perfil"] == "ADMIN" else []
+            vehicles = self.api.request("GET", "/veiculos?limit=100&offset=0")
+            users = self.api.request("GET", "/usuarios?limit=100&offset=0")
+            deliveries = self.api.request("GET", "/entregas?limit=100&offset=0")
+        except ApiError as exc:
+            self.notify(str(exc), True)
+            return
+
+        name = ft.TextField(label="Nome da rota")
+        description = ft.TextField(label="Descrição", multiline=True)
+        organization = ft.Dropdown(
+            label="Organização",
+            value=None,
+            options=[self.option(str(item["id"]), item["nome"]) for item in organizations],
+            visible=self.user["perfil"] == "ADMIN",
+        )
+        vehicle = ft.Dropdown(
+            label="Veículo",
+            value=None,
+            options=[self.option(str(item["id"]), item["placa"]) for item in vehicles],
+        )
+        driver = ft.Dropdown(
+            label="Motorista",
+            value=None,
+            options=[self.option(str(item["id"]), item["nome"]) for item in users if item["perfil"] == "MOTORISTA" and item["ativo"]],
+        )
+        status_field = ft.Dropdown(
+            label="Status",
+            value="PLANEJADA",
+            options=[self.option(value) for value in [
+                "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO",
+                "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
+            ]],
+        )
+        delivery = ft.Dropdown(
+            label="Entrega",
+            value=None,
+            options=[self.option(str(item["id"]), f'#{item["id"]} · {item["status"]}')
+                     for item in deliveries if item["status"] != "CANCELADA"],
+        )
+
+        def save(_):
+            self.clear_errors(name, delivery, organization if organization.visible else ft.Row())
+            valid = self.require_text(name, "Informe o nome da rota.", 2)
+            if self.user["perfil"] == "ADMIN" and organization.visible and not organization.value:
+                self.set_error(organization, "Selecione a organização.")
+                valid = False
+            if not delivery.value:
+                self.set_error(delivery, "Selecione uma entrega.")
+                valid = False
+            if not valid:
+                self.page.update()
+                self.notify("Corrija os campos destacados.", True)
+                return
+            payload = {
+                "nome": name.value.strip(),
+                "descricao": description.value.strip() or None,
+                "status": status_field.value,
+                "veiculo_id": int(vehicle.value) if vehicle.value else None,
+                "motorista_id": int(driver.value) if driver.value else None,
+                "entregas": [{"entrega_id": int(delivery.value), "ordem_visita": 1}],
+            }
+            if self.user["perfil"] == "ADMIN":
+                if organization.value:
+                    payload["organizacao_id"] = int(organization.value)
+            else:
+                payload["organizacao_id"] = self.user.get("organizacao_id")
+            try:
+                self.api.request("POST", "/rotas", json=payload)
+                dialog.open = False
+                self.notify("Rota criada com sucesso.")
+                self.routes_view()
+            except ApiError as exc:
+                dialog.open = False
+                self.show_error_dialog(str(exc), "Não foi possível criar a rota")
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Nova Rota"),
+            content=ft.Column([
+                name, description, organization, vehicle, driver, status_field, delivery,
+            ], tight=True, width=500),
+            actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                     ft.FilledButton("Salvar", on_click=save)],
+        )
+        self.open_dialog(dialog)
 
     def vehicles_view(self, search="", offset=0):
         page_size = 10

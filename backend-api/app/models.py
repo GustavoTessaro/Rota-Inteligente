@@ -110,6 +110,116 @@ class Veiculo(TimestampMixin, Base):
     motorista: Mapped[Usuario | None] = relationship(back_populates="veiculos")
 
 
+class StatusRota(str, enum.Enum):
+    PLANEJADA = "PLANEJADA"
+    AGUARDANDO_MOTORISTA = "AGUARDANDO_MOTORISTA"
+    AGUARDANDO_VEICULO = "AGUARDANDO_VEICULO"
+    PRONTA = "PRONTA"
+    EM_EXECUCAO = "EM_EXECUCAO"
+    PAUSADA = "PAUSADA"
+    FINALIZADA = "FINALIZADA"
+    CANCELADA = "CANCELADA"
+
+
+class TipoEventoRota(str, enum.Enum):
+    PARTIDA = "PARTIDA"
+    PAUSA = "PAUSA"
+    RETOMADA = "RETOMADA"
+    ABASTECIMENTO = "ABASTECIMENTO"
+    DESVIO = "DESVIO"
+    MANUTENCAO = "MANUTENCAO"
+    ENTREGA_REALIZADA = "ENTREGA_REALIZADA"
+    ENTREGA_FALHOU = "ENTREGA_FALHOU"
+    FINALIZADA = "FINALIZADA"
+
+
+class Rota(TimestampMixin, Base):
+    __tablename__ = "rotas"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(150), index=True)
+    descricao: Mapped[str | None] = mapped_column(Text)
+    organizacao_id: Mapped[int] = mapped_column(ForeignKey("organizacoes.id"), index=True)
+    veiculo_id: Mapped[int | None] = mapped_column(ForeignKey("veiculos.id"), index=True)
+    motorista_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), index=True)
+    status: Mapped[StatusRota] = mapped_column(Enum(StatusRota), default=StatusRota.PLANEJADA)
+    data_planejada: Mapped[datetime | None] = mapped_column(DateTime)
+    data_inicio: Mapped[datetime | None] = mapped_column(DateTime)
+    data_conclusao: Mapped[datetime | None] = mapped_column(DateTime)
+    origem_endereco_id: Mapped[int | None] = mapped_column(ForeignKey("enderecos.id"), index=True)
+    destino_endereco_id: Mapped[int | None] = mapped_column(ForeignKey("enderecos.id"), index=True)
+    distancia_prevista: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    duracao_prevista: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    distancia_real: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    duracao_real: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    progresso_percentual: Mapped[int] = mapped_column(default=0)
+    quilometragem_inicial: Mapped[int | None] = mapped_column()
+    quilometragem_final: Mapped[int | None] = mapped_column()
+    combustivel_inicial: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    combustivel_final: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    google_route_id: Mapped[str | None] = mapped_column(String(255))
+    google_optimization_request_id: Mapped[str | None] = mapped_column(String(255))
+    route_geometry: Mapped[str | None] = mapped_column(Text)
+    observacoes: Mapped[str | None] = mapped_column(Text)
+    organizacao: Mapped[Organizacao] = relationship()
+    veiculo: Mapped[Veiculo | None] = relationship()
+    motorista: Mapped[Usuario | None] = relationship()
+    origem_endereco: Mapped[Endereco | None] = relationship(foreign_keys=[origem_endereco_id])
+    destino_endereco: Mapped[Endereco | None] = relationship(foreign_keys=[destino_endereco_id])
+    entregas: Mapped[list["RotaEntrega"]] = relationship(back_populates="rota", cascade="all, delete-orphan")
+    historico: Mapped[list["RotaHistorico"]] = relationship(back_populates="rota", cascade="all, delete-orphan")
+    posicoes: Mapped[list["RotaPosicao"]] = relationship(back_populates="rota", cascade="all, delete-orphan")
+
+
+class RotaEntrega(Base):
+    __tablename__ = "rota_entregas"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rota_id: Mapped[int] = mapped_column(ForeignKey("rotas.id"), index=True)
+    entrega_id: Mapped[int] = mapped_column(ForeignKey("entregas.id"), index=True)
+    ordem_visita: Mapped[int] = mapped_column(default=0)
+    sequencia_otimizada: Mapped[int | None] = mapped_column()
+    prioridade: Mapped[Prioridade | None] = mapped_column(Enum(Prioridade))
+    janela_inicio: Mapped[datetime | None] = mapped_column(DateTime)
+    janela_fim: Mapped[datetime | None] = mapped_column(DateTime)
+    tempo_estacionamento: Mapped[int | None] = mapped_column()
+    peso: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    volume: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    rota: Mapped[Rota] = relationship(back_populates="entregas")
+    entrega: Mapped[Entrega] = relationship()
+
+
+class RotaHistorico(Base):
+    __tablename__ = "rota_historico"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rota_id: Mapped[int] = mapped_column(ForeignKey("rotas.id"), index=True)
+    evento: Mapped[TipoEventoRota] = mapped_column(Enum(TipoEventoRota))
+    status_anterior: Mapped[str | None] = mapped_column(String(50))
+    status_novo: Mapped[str | None] = mapped_column(String(50))
+    observacao: Mapped[str | None] = mapped_column(Text)
+    entrega_id: Mapped[int | None] = mapped_column(ForeignKey("entregas.id"), index=True)
+    alterado_por: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), index=True)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=now)
+    rota: Mapped[Rota] = relationship(back_populates="historico")
+
+
+class RotaPosicao(Base):
+    __tablename__ = "rota_posicoes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rota_id: Mapped[int] = mapped_column(ForeignKey("rotas.id"), index=True)
+    latitude: Mapped[Decimal] = mapped_column(Numeric(10, 8), nullable=False)
+    longitude: Mapped[Decimal] = mapped_column(Numeric(11, 8), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    velocidade: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    heading: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    accuracy: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    endereco: Mapped[str | None] = mapped_column(Text)
+    provider: Mapped[str | None] = mapped_column(String(50))
+    motorista_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), index=True)
+    veiculo_id: Mapped[int | None] = mapped_column(ForeignKey("veiculos.id"), index=True)
+    rota: Mapped[Rota] = relationship(back_populates="posicoes")
+    motorista: Mapped[Usuario | None] = relationship()
+    veiculo: Mapped[Veiculo | None] = relationship()
+
+
 class Cliente(TimestampMixin, Base):
     __tablename__ = "clientes"
     id: Mapped[int] = mapped_column(primary_key=True)
