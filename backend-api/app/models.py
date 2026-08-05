@@ -72,6 +72,41 @@ class Organizacao(TimestampMixin, Base):
     usuarios: Mapped[list["Usuario"]] = relationship(back_populates="organizacao", cascade="all, delete-orphan")
 
 
+class TipoVeiculo(str, enum.Enum):
+    CARRO = "CARRO"
+    VAN = "VAN"
+    UTILITARIO = "UTILITARIO"
+    CAMINHAO = "CAMINHAO"
+    CARRETA = "CARRETA"
+    OUTRO = "OUTRO"
+
+
+class StatusVeiculo(str, enum.Enum):
+    DISPONIVEL = "DISPONIVEL"
+    EM_ROTTA = "EM_ROTTA"
+    MANUTENCAO = "MANUTENCAO"
+
+
+class Veiculo(TimestampMixin, Base):
+    __tablename__ = "veiculos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    organizacao_id: Mapped[int] = mapped_column(ForeignKey("organizacoes.id"), index=True)
+    motorista_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), index=True)
+    placa: Mapped[str] = mapped_column(String(10), unique=True, index=True)
+    modelo: Mapped[str] = mapped_column(String(150))
+    marca: Mapped[str] = mapped_column(String(150))
+    ano: Mapped[int] = mapped_column()
+    cor: Mapped[str] = mapped_column(String(50))
+    capacidade_carga: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    capacidade_volume: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
+    tipo: Mapped[TipoVeiculo] = mapped_column(Enum(TipoVeiculo))
+    status: Mapped[StatusVeiculo] = mapped_column(Enum(StatusVeiculo), default=StatusVeiculo.DISPONIVEL)
+    quilometragem: Mapped[int] = mapped_column(default=0)
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+    organizacao: Mapped[Organizacao] = relationship()
+    motorista: Mapped[Usuario | None] = relationship()
+
+
 class Cliente(TimestampMixin, Base):
     __tablename__ = "clientes"
     id: Mapped[int] = mapped_column(primary_key=True)
