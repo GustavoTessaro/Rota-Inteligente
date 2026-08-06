@@ -7,4 +7,5 @@ def main(page: ft.Page):
     DeliveryApp(page).start()
 
 
-ft.run(main)
+if __name__ == "__main__":
+    ft.app(main)
