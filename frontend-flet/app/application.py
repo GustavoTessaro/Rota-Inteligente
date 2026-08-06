@@ -263,8 +263,7 @@ class DeliveryApp:
                     lng = endereco.get("longitude")
                     if lat and lng:
                         markers.append({"lat": lat, "lng": lng, "title": f"Entrega #{entrega.get('entrega_id')}"})
-                # keep as attribute so other methods can control the map
-                self.map_control = MapView(markers=markers, height=240)
+                self.map_control = MapView(markers=markers, height=240).build()
                 map_control = self.map_control
 
             self.content.controls = [
@@ -318,7 +317,7 @@ class DeliveryApp:
                         tooltip="Atualizar status",
                         items=[
                             ft.PopupMenuItem(
-                                content=value.replace("_", " ").title(),
+                                content=ft.Text(value.replace("_", " ").title()),
                                 on_click=lambda _, delivery_id=item["id"], new_status=value:
                                     self.update_status(delivery_id, new_status),
                             )
@@ -417,6 +416,7 @@ class DeliveryApp:
                     ),
                     trailing=ft.Row(actions, tight=True),
                 ))
+            map_control = getattr(self, "map_control", None)
             self.content.controls = [
                 self.header_bar("Rotas", f"{len(routes)} rota(s)", [
                     ft.FilledButton("Nova rota", icon=ft.Icons.ADD,
@@ -510,11 +510,11 @@ class DeliveryApp:
 
         # ensure map control exists
         if not getattr(self, 'map_control', None):
-            self.map_control = MapView(markers=[], height=400)
+            self.map_control = MapView(markers=[], height=400).build()
             # insert map into UI
             self.content.controls.append(ft.Container(self.map_control, padding=10))
 
-        web = self.map_control.build()
+        web = self.map_control
         # draw the polyline
         try:
             web.draw_polyline(encoded)
@@ -2091,7 +2091,7 @@ class DeliveryApp:
                             tooltip="Atualizar status",
                             items=[
                                 ft.PopupMenuItem(
-                                    content=value.replace("_", " ").title(),
+                                    content=ft.Text(value.replace("_", " ").title()),
                                     on_click=lambda _, order_id=item["id"], new_status=value:
                                         self.update_order_status(order_id, new_status),
                                 )

@@ -5,9 +5,8 @@ import urllib.parse
 import flet as ft
 
 
-class MapView(ft.Control):
+class MapView:
     def __init__(self, markers=None, api_key=None, height=400):
-        super().__init__()
         self.markers = markers or []
         self.api_key = api_key
         self.height = height
@@ -26,7 +25,7 @@ class MapView(ft.Control):
         injected_html = html.replace("<head>", "<head>" + inject, 1)
         data_url = "data:text/html;charset=utf-8," + urllib.parse.quote(injected_html)
 
-        web = ft.WebView(src=data_url, expand=True, height=self.height)
+        web = ft.WebView(url=data_url, expand=True, height=self.height)
         self._web_view = web
 
         def _on_ready(e=None):
@@ -44,7 +43,7 @@ class MapView(ft.Control):
                 pass
 
         try:
-            web.on_page_load = _on_ready
+            web.on_page_started = _on_ready
         except Exception:
             try:
                 from time import sleep
