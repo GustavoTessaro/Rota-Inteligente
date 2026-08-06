@@ -98,7 +98,7 @@ class DeliveryApp:
             ]
             if admin_user:
                 destinations += [
-                    ft.NavigationRailDestination(icon=ft.Icons.BUILDING, label="Organizações"),
+                    ft.NavigationRailDestination(icon=ft.Icons.DOMAIN, label="Organizações"),
                 ]
             destinations += [
                 ft.NavigationRailDestination(icon=ft.Icons.RECEIPT_LONG, label="Pedidos"),
@@ -1319,7 +1319,7 @@ class DeliveryApp:
                     ),
                 ]
                 rows.append(ft.ListTile(
-                    leading=ft.Icon(ft.Icons.BUILDING),
+                    leading=ft.Icon(ft.Icons.DOMAIN),
                     title=ft.Text(item["nome"]),
                     subtitle=ft.Text(subtitle),
                     trailing=ft.Row(actions, tight=True),
