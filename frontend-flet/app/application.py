@@ -252,6 +252,7 @@ class DeliveryApp:
                 for item in data.get("proximas_rotas", [])
             ]
 
+            routes = data.get("proximas_rotas", [])
             map_control = None
             if routes:
                 first = routes[0]
