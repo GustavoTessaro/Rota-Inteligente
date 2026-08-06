@@ -76,7 +76,7 @@ class DeliveryApp:
                 padding=30,
                 border_radius=20,
                 bgcolor=ft.Colors.WHITE,
-                shadow=ft.BoxShadow(blur_radius=25, color=ft.Colors.BLACK_12),
+                shadow=ft.BoxShadow(blur_radius=25, color=ft.Colors.BLACK12),
             )
         )
         self.page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
