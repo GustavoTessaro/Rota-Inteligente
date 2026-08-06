@@ -1110,12 +1110,13 @@ class DeliveryApp:
             self.show_error_dialog(str(exc), "Não foi possível excluir")
 
     def close_dialog(self, dialog, update=True):
-        dialog.open = False
+        self.page.close(dialog)
         if update:
             self.page.update()
 
     def open_dialog(self, dialog):
-        self.page.show_dialog(dialog)
+        self.page.open(dialog)
+        self.page.update()
 
     def show_error_dialog(self, message, title="Atenção"):
         dialog = ft.AlertDialog(
