@@ -37,11 +37,25 @@ class DeliveryApp:
         self.show_login()
 
     def notify(self, message: str, error=False):
-        self.page.snack_bar = ft.SnackBar(
-            ft.Text(message), bgcolor=ft.Colors.RED_700 if error else ft.Colors.GREEN_700
-        )
+        def _close(_):
+            try:
+                self.page.snack_bar.open = False
+                self.page.update()
+            except Exception:
+                pass
+
+        color = ft.Colors.RED_700 if error else ft.Colors.GREEN_700
+        self.page.snack_bar = ft.SnackBar(content=ft.Text(message), bgcolor=color,
+                                         action=ft.TextButton("Fechar", on_click=_close))
         self.page.snack_bar.open = True
         self.page.update()
+        # Fallback explícito: abrir diálogo de erro se for mensagem de erro
+        if error:
+            try:
+                self.show_error_dialog(message, "Erro")
+            except Exception:
+                # não bloquear por falha no diálogo de fallback
+                pass
 
     def show_login(self):
         email = ft.TextField(label="E-mail", value="admin@sistema.com", prefix_icon=ft.Icons.EMAIL)
@@ -609,12 +623,14 @@ class DeliveryApp:
                 payload["organizacao_id"] = self.user.get("organizacao_id")
             try:
                 self.api.request("POST", "/rotas", json=payload)
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify("Rota criada com sucesso.")
                 self.routes_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível criar a rota")
+                # mantém o diálogo aberto e fornece feedback claro
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Nova Rota"),
@@ -774,12 +790,14 @@ class DeliveryApp:
                 else:
                     self.api.request("POST", "/veiculos", json=payload)
                     message = "Veículo cadastrado."
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify(message)
                 self.vehicles_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                # mantém diálogo aberto e mostra feedback
+                self.page.update()
+                self.notify(str(exc), True)
+                return
             except ValueError:
                 self.notify("Informe valores numéricos válidos para ano, carga, volume e quilometragem.", True)
 
@@ -800,12 +818,13 @@ class DeliveryApp:
         def delete(_):
             try:
                 self.api.request("DELETE", f'/veiculos/{vehicle["id"]}')
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify("Veículo excluído.")
                 self.vehicles_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir veículo"),
@@ -830,12 +849,13 @@ class DeliveryApp:
         def delete(_):
             try:
                 self.api.request("DELETE", f'/entregas/{delivery["id"]}')
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify("Entrega excluída.")
                 self.deliveries_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir entrega"),
@@ -922,7 +942,7 @@ class DeliveryApp:
                 else:
                     self.api.request("POST", "/entregas", json=payload)
                     message = "Entrega cadastrada."
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify(message)
                 self.deliveries_view()
             except ApiError as exc:
@@ -969,21 +989,21 @@ class DeliveryApp:
                     self.api.request("PATCH", f"/entregas/{delivery_id}/status",
                                      json={"status": "ENTREGUE", "observacao": "Entrega confirmada"})
                     message = "Entrega concluída com comprovante."
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify(message)
                 self.deliveries_view()
             except ApiError as exc:
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.show_error_dialog(str(exc), "Não foi possível salvar")
 
         def delete(_):
             try:
                 self.api.request("DELETE", f"/entregas/{delivery_id}/comprovante")
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify("Comprovante excluído.")
                 self.deliveries_view()
             except ApiError as exc:
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.show_error_dialog(str(exc), "Não foi possível excluir")
 
         actions = [ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog))]
@@ -1082,13 +1102,13 @@ class DeliveryApp:
                 else:
                     self.api.request("POST", f'/entregas/{delivery["id"]}/ocorrencias', json=payload)
                     message = "Ocorrência registrada."
-                dialog.open = False
+                self.close_dialog(dialog)
                 if parent_dialog:
                     parent_dialog.open = False
                 self.notify(message)
                 self.incidents_dialog(delivery)
             except ApiError as exc:
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.show_error_dialog(str(exc), "Não foi possível salvar")
 
         dialog = ft.AlertDialog(
@@ -1393,7 +1413,7 @@ class DeliveryApp:
                 else:
                     self.api.request("POST", "/organizacoes", json=payload)
                     message = "Organização cadastrada."
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify(message)
                 self.organizations_view()
             except ApiError as exc:
@@ -1900,20 +1920,26 @@ class DeliveryApp:
 
         def save(_):
             self.clear_errors(name, email, password, profile, organization)
-            valid = all([
-                self.require_text(name, "Informe pelo menos 2 caracteres.", 2),
-                self.validate_email_field(email),
-                self.require_dropdown(profile, "Selecione o perfil."),
-            ])
-            if not user and len(password.value.strip()) < 6:
-                self.set_error(password, "Informe uma senha com pelo menos 6 caracteres.")
-                valid = False
-            if user and password.value.strip() and len(password.value.strip()) < 6:
-                self.set_error(password, "A nova senha deve ter pelo menos 6 caracteres.")
-                valid = False
-            if not valid:
+            # validações e coleta de mensagens para feedback
+            errors = []
+            if not self.require_text(name, "Informe pelo menos 2 caracteres.", 2):
+                errors.append("Nome: informe pelo menos 2 caracteres.")
+            if not self.validate_email_field(email):
+                errors.append("E-mail: informe um e-mail válido.")
+            if not self.require_dropdown(profile, "Selecione o perfil."):
+                errors.append("Perfil: selecione o perfil.")
+            if not user:
+                if len((password.value or "").strip()) < 6:
+                    self.set_error(password, "Informe uma senha com pelo menos 6 caracteres.")
+                    errors.append("Senha: informe pelo menos 6 caracteres.")
+            else:
+                if (password.value or "").strip() and len(password.value.strip()) < 6:
+                    self.set_error(password, "A nova senha deve ter pelo menos 6 caracteres.")
+                    errors.append("Senha: a nova senha deve ter pelo menos 6 caracteres.")
+            if errors:
+                # mostra mensagens específicas para o usuário e mantém o diálogo aberto
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
+                self.notify("; ".join(errors), True)
                 return
             payload = {
                 "nome": name.value.strip(),
@@ -1930,12 +1956,17 @@ class DeliveryApp:
                 else:
                     self.api.request("POST", "/usuarios", json=payload)
                     message = "Usuário cadastrado."
-                dialog.open = False
+                # sucesso: fecha diálogo e atualiza lista
+                self.close_dialog(dialog)
                 self.notify(message)
                 self.users_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                # não fecha o diálogo automaticamente; mostra erro detalhado ao usuário
+                err_msg = str(exc)
+                # se o backend retornou mensagens separadas por "; ", exibi-las separadamente
+                self.page.update()
+                self.notify(f"Não foi possível salvar: {err_msg}", True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar usuário" if user else "Novo usuário"),
