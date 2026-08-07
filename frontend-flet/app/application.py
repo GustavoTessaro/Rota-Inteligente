@@ -2307,12 +2307,22 @@ class DeliveryApp:
             }
             for item in existing_items
         ]
+        def select_product(_=None):
+            selected = next((item for item in active_products if str(item["id"]) == product.value), None)
+            if selected:
+                price.value = str(selected["valor_declarado"])
+                self.page.update()
+
         client = ft.Dropdown(
             label="Cliente",
             value=str(order["cliente_id"]) if order else None,
             options=[self.option(item["id"], item["nome"]) for item in active_clients],
         )
-        product = ft.Dropdown(label="Produto", options=[self.option(item["id"], item["nome"]) for item in active_products])
+        product = ft.Dropdown(
+            label="Produto",
+            options=[self.option(item["id"], item["nome"]) for item in active_products],
+            on_change=select_product,
+        )
         quantity = ft.TextField(label="Quantidade", value="1", width=130)
         price = ft.TextField(label="Valor unitário", value="0", width=160)
         items_column = ft.Column(spacing=6)
@@ -2326,32 +2336,25 @@ class DeliveryApp:
 
         def refresh_items():
             items_column.controls = [
-                ft.ListTile(
-                    dense=True,
-                    leading=ft.Icon(ft.Icons.SHOPPING_CART),
-                    title=ft.Text(item["nome"]),
-                    subtitle=ft.Text(f'{item["quantidade"]} x R$ {item["valor_unitario"]:.2f}'),
-                    trailing=ft.IconButton(
-                        ft.Icons.DELETE,
-                        tooltip="Remover item",
-                        on_click=lambda _, index=index: remove_item(index),
-                    ),
-                )
-                for index, item in enumerate(order_items)
-            ] or [ft.Text("Nenhum item adicionado.")]
+                ft.Text("Itens adicionados", weight=ft.FontWeight.BOLD, size=12),
+                *[
+                    ft.ListTile(
+                        dense=True,
+                        leading=ft.Icon(ft.Icons.SHOPPING_CART),
+                        title=ft.Text(item["nome"]),
+                        subtitle=ft.Text(f'{item["quantidade"]} x R$ {item["valor_unitario"]:.2f}'),
+                        trailing=ft.Row([
+                            ft.TextButton("Remover", icon=ft.Icons.DELETE, on_click=lambda _, index=index: remove_item(index)),
+                        ], tight=True),
+                    )
+                    for index, item in enumerate(order_items)
+                ],
+            ] if order_items else [ft.Text("Nenhum item adicionado.")]
             self.page.update()
 
         def remove_item(index):
             order_items.pop(index)
             refresh_items()
-
-        def select_product(event):
-            selected = next((item for item in active_products if str(item["id"]) == product.value), None)
-            if selected:
-                price.value = str(selected["valor_declarado"])
-                self.page.update()
-
-        product.on_select = select_product
 
         def add_item(_):
             self.clear_errors(product, quantity, price)
@@ -2431,7 +2434,12 @@ class DeliveryApp:
             title=ft.Text("Editar pedido" if order else "Novo pedido"),
             content=ft.Column([
                 client,
-                ft.Row([product, quantity, price, ft.IconButton(ft.Icons.ADD, tooltip="Adicionar item", on_click=add_item)]),
+                ft.Row([
+                    product,
+                    quantity,
+                    price,
+                    ft.FilledButton("Adicionar item", icon=ft.Icons.ADD, on_click=add_item),
+                ], wrap=True, spacing=10),
                 items_column,
                 priority,
                 payment,
