@@ -107,6 +107,41 @@ def test_optimize_route_rejects_finalized_route(client: TestClient, admin_header
     assert response.status_code == 422
 
 
+def test_optimize_route_geocodes_missing_coordinates(client: TestClient, admin_headers: dict) -> None:
+    route = _create_route_with_delivery(client, admin_headers)
+
+    with SessionLocal() as db:
+        persisted = db.get(Rota, route["id"])
+        assert persisted is not None
+        entry = persisted.entregas[0]
+        delivery = db.get(Entrega, entry.entrega_id)
+        if delivery is not None and delivery.endereco_destino_id is not None:
+            address = db.get(Endereco, delivery.endereco_destino_id)
+            if address is not None:
+                address.latitude = None
+                address.longitude = None
+                db.commit()
+
+    with patch("app.routers.rotas.GoogleMapsService.geocode", return_value={
+        "results": [{"geometry": {"location": {"lat": -23.550520, "lng": -46.633308}}}]
+    }) as geocode_mock, patch("app.routers.rotas.RouteOptimizationService.optimize_route", return_value={
+        "optimized_order": [0],
+        "ordered_waypoints": [{"lat": -23.550520, "lng": -46.633308, "label": "Parada 1"}],
+        "distance_meters": 1000,
+        "duration_seconds": 120,
+        "encoded_polyline": "abc123",
+    }) as optimize_mock:
+        response = client.post(f"/api/rotas/{route['id']}/otimizar", headers=admin_headers)
+
+    assert response.status_code == 200
+    geocode_mock.assert_called()
+    optimize_mock.assert_called_once()
+    origin, destination, waypoints = optimize_mock.call_args.args[:3]
+    assert origin is not None
+    assert destination is not None
+    assert waypoints
+
+
 def test_optimize_route_requires_coordinates(client: TestClient, admin_headers: dict) -> None:
     response = client.post(
         "/api/rotas",

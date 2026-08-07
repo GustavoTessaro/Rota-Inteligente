@@ -64,6 +64,45 @@ class RouteOptimizationService:
         return self.service.optimize_route(origin, destination, waypoints, vehicle_constraints, time_windows, vehicle_count=vehicle_count)
 
 
+def _address_to_query(address: Endereco | None) -> str | None:
+    if address is None:
+        return None
+    parts = [address.endereco_formatado, address.logradouro, address.numero, address.bairro, address.cidade, address.estado, address.cep]
+    normalized = [part for part in parts if part]
+    return ", ".join(normalized) if normalized else None
+
+
+def _resolve_address_coordinates(db: Session, address: Endereco | None, geocoder: GoogleMapsService) -> dict[str, float] | None:
+    if address is None:
+        return None
+    if address.latitude is not None and address.longitude is not None:
+        return {"lat": float(address.latitude), "lng": float(address.longitude)}
+
+    query = _address_to_query(address)
+    if not query:
+        return None
+
+    try:
+        response = geocoder.geocode(query)
+    except Exception:
+        return None
+
+    results = response.get("results") if isinstance(response, dict) else None
+    if not results:
+        return None
+
+    location = results[0].get("geometry", {}).get("location", {})
+    lat = location.get("lat")
+    lng = location.get("lng")
+    if lat is None or lng is None:
+        return None
+
+    address.latitude = Decimal(str(lat))
+    address.longitude = Decimal(str(lng))
+    db.add(address)
+    return {"lat": float(lat), "lng": float(lng)}
+
+
 @router.get("", response_model=list[RotaOut])
 def list_routes(
     status: StatusRota | None = None,
@@ -235,10 +274,18 @@ def optimize_route_endpoint(
     origin = None
     destination = None
     waypoints: list[dict[str, Any]] = []
+    geocoder = GoogleMapsService()
 
-    if rota.origem_endereco and rota.origem_endereco.latitude is not None and rota.origem_endereco.longitude is not None:
+    if rota.origem_endereco_id is not None:
+        origin_address = db.get(Endereco, rota.origem_endereco_id)
+        origin = _resolve_address_coordinates(db, origin_address, geocoder)
+    elif rota.origem_endereco and rota.origem_endereco.latitude is not None and rota.origem_endereco.longitude is not None:
         origin = {"lat": float(rota.origem_endereco.latitude), "lng": float(rota.origem_endereco.longitude)}
-    if rota.destino_endereco and rota.destino_endereco.latitude is not None and rota.destino_endereco.longitude is not None:
+
+    if rota.destino_endereco_id is not None:
+        destination_address = db.get(Endereco, rota.destino_endereco_id)
+        destination = _resolve_address_coordinates(db, destination_address, geocoder)
+    elif rota.destino_endereco and rota.destino_endereco.latitude is not None and rota.destino_endereco.longitude is not None:
         destination = {"lat": float(rota.destino_endereco.latitude), "lng": float(rota.destino_endereco.longitude)}
 
     for entry in sorted(rota.entregas, key=lambda item: item.ordem_visita or 0):
@@ -247,10 +294,11 @@ def optimize_route_endpoint(
             raise HTTPException(422, f"Entrega {entry.entrega_id} não encontrada")
         if delivery.endereco_destino_id is not None:
             address = db.get(Endereco, delivery.endereco_destino_id)
-            if address and address.latitude is not None and address.longitude is not None:
+            resolved = _resolve_address_coordinates(db, address, geocoder)
+            if resolved is not None:
                 waypoints.append({
-                    "lat": float(address.latitude),
-                    "lng": float(address.longitude),
+                    "lat": resolved["lat"],
+                    "lng": resolved["lng"],
                     "label": f"Entrega {delivery.id}",
                 })
 
