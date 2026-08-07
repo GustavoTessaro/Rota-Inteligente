@@ -181,11 +181,29 @@ async def create_route_position(
 ):
     rota = get_or_404(db, Rota, rota_id)
     ensure_route_access_scope(user, rota)
+
+    if data.veiculo_id is not None:
+        veiculo = get_or_404(db, Veiculo, data.veiculo_id)
+        if veiculo.organizacao_id != rota.organizacao_id:
+            raise HTTPException(422, "Veículo deve pertencer à organização da rota")
+        if rota.veiculo_id is not None and veiculo.id != rota.veiculo_id:
+            raise HTTPException(422, "Veículo deve ser o mesmo associado à rota")
+    else:
+        if rota.veiculo_id is not None:
+            data.veiculo_id = rota.veiculo_id
+
+    if data.motorista_id is not None:
+        motorista = get_or_404(db, Usuario, data.motorista_id)
+        if motorista.perfil != Perfil.MOTORISTA or not motorista.ativo:
+            raise HTTPException(422, "O motorista deve possuir perfil MOTORISTA e estar ativo")
+        if rota.motorista_id is not None and motorista.id != rota.motorista_id:
+            raise HTTPException(422, "Motorista deve ser o mesmo associado à rota")
+
     posicao = RotaPosicao(rota_id=rota_id, **data.model_dump(exclude_none=True))
     db.add(posicao)
     commit(db)
     db.refresh(posicao)
-    payload = jsonable_encoder(RotaPosicaoOut.from_orm(posicao))
+    payload = jsonable_encoder(RotaPosicaoOut.model_validate(posicao))
     await manager.broadcast({"type": "rota_posicao", "payload": payload})
     return posicao
 

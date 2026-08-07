@@ -8,6 +8,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 class ConnectionManager:
     def __init__(self) -> None:
         self.active_connections: list[WebSocket] = []
+        self._lock = asyncio.Lock()
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -18,14 +19,15 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict[str, Any]) -> None:
-        dead_connections: list[WebSocket] = []
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                dead_connections.append(connection)
-        for connection in dead_connections:
-            self.disconnect(connection)
+        async with self._lock:
+            dead_connections: list[WebSocket] = []
+            for connection in list(self.active_connections):
+                try:
+                    await connection.send_json(message)
+                except Exception:
+                    dead_connections.append(connection)
+            for connection in dead_connections:
+                self.disconnect(connection)
 
 
 manager = ConnectionManager()

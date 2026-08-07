@@ -268,6 +268,20 @@ class RotaPosicaoCreate(BaseModel):
     motorista_id: int | None = None
     veiculo_id: int | None = None
 
+    @field_validator("latitude")
+    @classmethod
+    def validate_latitude(cls, value):
+        if value < -90 or value > 90:
+            raise ValueError("latitude deve estar entre -90 e 90")
+        return value
+
+    @field_validator("longitude")
+    @classmethod
+    def validate_longitude(cls, value):
+        if value < -180 or value > 180:
+            raise ValueError("longitude deve estar entre -180 e 180")
+        return value
+
     @field_validator("endereco", "provider", mode="before")
     @classmethod
     def strip_text(cls, value):
