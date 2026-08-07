@@ -619,16 +619,21 @@ class DeliveryApp:
 
         def save(_):
             self.clear_errors(name, delivery, organization if organization.visible else ft.Row())
+            errors = []
             valid = self.require_text(name, "Informe o nome da rota.", 2)
+            if not valid:
+                errors.append("Nome: informe o nome da rota.")
             if self.user["perfil"] == "ADMIN" and organization.visible and not organization.value:
                 self.set_error(organization, "Selecione a organização.")
+                errors.append("Organização: selecione a organização.")
                 valid = False
             if not delivery.value:
                 self.set_error(delivery, "Selecione uma entrega.")
+                errors.append("Entrega: selecione uma entrega.")
                 valid = False
             if not valid:
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
+                self.notify("; ".join(errors), True)
                 return
             payload = {
                 "nome": name.value.strip(),
@@ -774,6 +779,7 @@ class DeliveryApp:
             if self.user["perfil"] == "ADMIN":
                 fields_to_validate.append(organization)
             self.clear_errors(*fields_to_validate, driver)
+            errors = []
             valid = all([
                 self.require_text(license_plate, "Informe a placa do veículo.", 5),
                 self.require_text(model, "Informe o modelo.", 2),
@@ -784,11 +790,28 @@ class DeliveryApp:
                 self.validate_positive_number(capacity_volume, "Informe o volume maior ou igual a zero."),
                 self.validate_positive_number(mileage, "Informe uma quilometragem maior ou igual a zero.", allow_zero=True),
             ])
+            if not self.require_text(license_plate, "Informe a placa do veículo.", 5):
+                errors.append("Placa: informe a placa do veículo.")
+            if not self.require_text(model, "Informe o modelo.", 2):
+                errors.append("Modelo: informe o modelo.")
+            if not self.require_text(brand, "Informe a marca.", 2):
+                errors.append("Marca: informe a marca.")
+            if not self.require_text(year, "Informe o ano.", 4):
+                errors.append("Ano: informe o ano.")
+            if not self.require_text(color, "Informe a cor.", 2):
+                errors.append("Cor: informe a cor.")
+            if not self.validate_positive_number(capacity_weight, "Informe a carga maior ou igual a zero."):
+                errors.append("Capacidade de carga: informe um valor maior ou igual a zero.")
+            if not self.validate_positive_number(capacity_volume, "Informe o volume maior ou igual a zero."):
+                errors.append("Capacidade de volume: informe um valor maior ou igual a zero.")
+            if not self.validate_positive_number(mileage, "Informe uma quilometragem maior ou igual a zero.", allow_zero=True):
+                errors.append("Quilometragem: informe um valor maior ou igual a zero.")
             if self.user["perfil"] == "ADMIN" and organization.visible and not organization.value:
                 self.set_error(organization, "Selecione a organização.")
+                errors.append("Organização: selecione a organização.")
                 valid = False
             if not valid:
-                error_message.value = "Corrija os campos destacados."
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             try:
@@ -935,22 +958,30 @@ class DeliveryApp:
 
         def save(_):
             self.clear_errors(order, origin, destination, due)
-            valid = all([
-                self.require_dropdown(order, "Selecione o pedido."),
-                self.require_dropdown(origin, "Selecione o endereço de origem."),
-                self.require_dropdown(destination, "Selecione o endereço de destino."),
-            ])
+            errors = []
+            valid = True
+            if not self.require_dropdown(order, "Selecione o pedido."):
+                errors.append("Pedido: selecione um pedido.")
+                valid = False
+            if not self.require_dropdown(origin, "Selecione o endereço de origem."):
+                errors.append("Origem: selecione um endereço de origem.")
+                valid = False
+            if not self.require_dropdown(destination, "Selecione o endereço de destino."):
+                errors.append("Destino: selecione um endereço de destino.")
+                valid = False
             if origin.value and destination.value and origin.value == destination.value:
                 self.set_error(destination, "Origem e destino devem ser diferentes.")
+                errors.append("Destino: origem e destino devem ser diferentes.")
                 valid = False
             if due.value.strip():
                 try:
                     datetime.fromisoformat(due.value.strip())
                 except ValueError:
                     self.set_error(due, "Use o formato YYYY-MM-DDTHH:MM:SS.")
+                    errors.append("Previsão: use o formato YYYY-MM-DDTHH:MM:SS.")
                     valid = False
             if not valid:
-                error_message.value = "Corrija os campos destacados."
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             payload = {
@@ -997,12 +1028,16 @@ class DeliveryApp:
 
         def save(_):
             self.clear_errors(name, document)
-            valid = all([
-                self.require_text(name, "Informe pelo menos 2 caracteres.", 2),
-                self.require_text(document, "Informe pelo menos 3 caracteres.", 3),
-            ])
+            errors = []
+            valid = True
+            if not self.require_text(name, "Informe pelo menos 2 caracteres.", 2):
+                errors.append("Nome do recebedor: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.require_text(document, "Informe pelo menos 3 caracteres.", 3):
+                errors.append("Documento: informe pelo menos 3 caracteres.")
+                valid = False
             if not valid:
-                error_message.value = "Corrija os campos destacados."
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             try:
@@ -1116,12 +1151,16 @@ class DeliveryApp:
         def save(_):
             self.clear_errors(kind, description)
             payload = {"tipo": kind.value.strip(), "descricao": description.value.strip()}
-            valid = all([
-                self.require_text(kind, "Informe pelo menos 2 caracteres.", 2),
-                self.require_text(description, "Informe pelo menos 5 caracteres.", 5),
-            ])
+            errors = []
+            valid = True
+            if not self.require_text(kind, "Informe pelo menos 2 caracteres.", 2):
+                errors.append("Tipo: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.require_text(description, "Informe pelo menos 5 caracteres.", 5):
+                errors.append("Descrição: informe pelo menos 5 caracteres.")
+                valid = False
             if not valid:
-                error_message.value = "Corrija os campos destacados."
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             try:
@@ -1414,26 +1453,32 @@ class DeliveryApp:
         active = ft.Checkbox(label="Ativo", value=(organization or {}).get("ativo", True))
 
         def validate():
+            errors = []
             valid = True
             self.clear_errors(name, cnpj, email, address)
             if len(name.value.strip()) < 2:
                 self.set_error(name, "Informe pelo menos 2 caracteres.")
+                errors.append("Nome: informe pelo menos 2 caracteres.")
                 valid = False
             cnpj_digits = self.only_digits(cnpj.value)
             if len(cnpj_digits) != 14:
                 self.set_error(cnpj, "CNPJ deve ter 14 dígitos.")
+                errors.append("CNPJ: informe 14 dígitos.")
                 valid = False
             if not self.validate_email_field(email):
+                errors.append("E-mail: informe um e-mail válido.")
                 valid = False
             if len(address.value.strip()) < 5:
                 self.set_error(address, "Informe um endereço válido.")
+                errors.append("Endereço: informe um endereço válido.")
                 valid = False
             self.page.update()
-            return valid
+            return valid, errors
 
         def save(_):
-            if not validate():
-                error_message.value = "Corrija os campos destacados."
+            valid, errors = validate()
+            if not valid:
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             payload = {
@@ -1502,34 +1547,40 @@ class DeliveryApp:
         )
 
         def validate():
+            errors = []
             valid = True
             self.clear_errors(name, document, email, phone)
 
             if len(name.value.strip()) < 2:
                 self.set_error(name, "Informe pelo menos 2 caracteres.")
+                errors.append("Nome: informe pelo menos 2 caracteres.")
                 valid = False
 
             document_digits = self.only_digits(document.value)
             if document.value.strip() and len(document_digits) not in (11, 14):
                 self.set_error(document, "Use 11 dígitos para CPF ou 14 para CNPJ.")
+                errors.append("CPF/CNPJ: use 11 dígitos para CPF ou 14 para CNPJ.")
                 valid = False
 
             email_value = email.value.strip()
             if email_value and ("@" not in email_value or "." not in email_value.split("@")[-1]):
                 self.set_error(email, "Informe um e-mail válido.")
+                errors.append("E-mail: informe um e-mail válido.")
                 valid = False
 
             phone_digits = self.only_digits(phone.value)
             if phone.value.strip() and not 10 <= len(phone_digits) <= 11:
                 self.set_error(phone, "Use DDD + número, com 10 ou 11 dígitos.")
+                errors.append("Telefone: use DDD + número, com 10 ou 11 dígitos.")
                 valid = False
 
             self.page.update()
-            return valid
+            return valid, errors
 
         def save(_):
-            if not validate():
-                error_message.value = "Corrija os campos destacados."
+            valid, errors = validate()
+            if not valid:
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             payload = {
@@ -1618,22 +1669,35 @@ class DeliveryApp:
 
         def save(_):
             self.clear_errors(street, number, district, city, state, zip_code, kind)
-            valid = all([
-                self.require_text(street, "Informe pelo menos 2 caracteres.", 2),
-                self.require_text(number, "Informe o número.", 1),
-                self.require_text(district, "Informe pelo menos 2 caracteres.", 2),
-                self.require_text(city, "Informe pelo menos 2 caracteres.", 2),
-                self.require_text(state, "Informe a UF com 2 letras.", 2),
-                self.require_dropdown(kind, "Selecione o tipo."),
-            ])
+            errors = []
+            valid = True
+            if not self.require_text(street, "Informe pelo menos 2 caracteres.", 2):
+                errors.append("Logradouro: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.require_text(number, "Informe o número.", 1):
+                errors.append("Número: informe o número.")
+                valid = False
+            if not self.require_text(district, "Informe pelo menos 2 caracteres.", 2):
+                errors.append("Bairro: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.require_text(city, "Informe pelo menos 2 caracteres.", 2):
+                errors.append("Cidade: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.require_text(state, "Informe a UF com 2 letras.", 2):
+                errors.append("UF: informe a UF com 2 letras.")
+                valid = False
+            if not self.require_dropdown(kind, "Selecione o tipo."):
+                errors.append("Tipo: selecione o tipo do endereço.")
+                valid = False
             if len((state.value or "").strip()) != 2:
                 self.set_error(state, "Informe a UF com 2 letras.")
                 valid = False
             if len(self.only_digits(zip_code.value)) != 8:
                 self.set_error(zip_code, "Informe o CEP com 8 dígitos.")
+                errors.append("CEP: informe o CEP com 8 dígitos.")
                 valid = False
             if not valid:
-                error_message.value = "Corrija os campos destacados."
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             payload = {
@@ -1800,14 +1864,22 @@ class DeliveryApp:
 
         def save(_):
             self.clear_errors(name, weight, volume, declared)
-            valid = all([
-                self.require_text(name, "Informe pelo menos 2 caracteres.", 2),
-                self.validate_positive_number(weight, "Informe um peso igual ou maior que zero."),
-                self.validate_positive_number(volume, "Informe um volume igual ou maior que zero."),
-                self.validate_positive_number(declared, "Informe um valor igual ou maior que zero."),
-            ])
+            errors = []
+            valid = True
+            if not self.require_text(name, "Informe pelo menos 2 caracteres.", 2):
+                errors.append("Nome: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.validate_positive_number(weight, "Informe um peso igual ou maior que zero."):
+                errors.append("Peso: informe um valor maior ou igual a zero.")
+                valid = False
+            if not self.validate_positive_number(volume, "Informe um volume igual ou maior que zero."):
+                errors.append("Volume: informe um valor maior ou igual a zero.")
+                valid = False
+            if not self.validate_positive_number(declared, "Informe um valor igual ou maior que zero."):
+                errors.append("Valor declarado: informe um valor maior ou igual a zero.")
+                valid = False
             if not valid:
-                error_message.value = "Corrija os campos destacados."
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             payload = {
@@ -2085,7 +2157,12 @@ class DeliveryApp:
                     self.set_error(end_field, "Use o formato YYYY-MM-DDTHH:MM:SS.")
             if start_field.error or end_field.error:
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
+                messages = []
+                if start_field.error:
+                    messages.append(start_field.error)
+                if end_field.error:
+                    messages.append(end_field.error)
+                self.notify("; ".join(messages), True)
                 return None
             if status_field.value:
                 params.append(f"status={status_field.value}")
@@ -2358,22 +2435,28 @@ class DeliveryApp:
 
         def add_item(_):
             self.clear_errors(product, quantity, price)
-            valid = all([
-                self.require_dropdown(product, "Selecione o produto."),
-                self.validate_positive_number(price, "Informe um valor unitário igual ou maior que zero."),
-            ])
+            errors = []
+            valid = True
+            if not self.require_dropdown(product, "Selecione o produto."):
+                errors.append("Produto: selecione um produto.")
+                valid = False
+            if not self.validate_positive_number(price, "Informe um valor unitário igual ou maior que zero."):
+                errors.append("Valor unitário: informe um valor maior ou igual a zero.")
+                valid = False
             try:
                 qty = int(quantity.value or 0)
             except ValueError:
                 qty = 0
             if qty < 1:
                 self.set_error(quantity, "Informe uma quantidade maior que zero.")
+                errors.append("Quantidade: informe uma quantidade maior que zero.")
                 valid = False
             selected = next((item for item in active_products if str(item["id"]) == product.value), None)
             if not selected:
                 self.set_error(product, "Selecione o produto.")
                 valid = False
             if not valid:
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             order_items.append({
@@ -2391,15 +2474,20 @@ class DeliveryApp:
 
         def save(_):
             self.clear_errors(client, priority)
-            valid = all([
-                self.require_dropdown(client, "Selecione o cliente."),
-                self.require_dropdown(priority, "Selecione a prioridade."),
-            ])
+            errors = []
+            valid = True
+            if not self.require_dropdown(client, "Selecione o cliente."):
+                errors.append("Cliente: selecione um cliente.")
+                valid = False
+            if not self.require_dropdown(priority, "Selecione a prioridade."):
+                errors.append("Prioridade: selecione a prioridade.")
+                valid = False
             if not order_items:
                 self.set_error(product, "Adicione pelo menos um item.")
+                errors.append("Itens: adicione pelo menos um item ao pedido.")
                 valid = False
             if not valid:
-                error_message.value = "Corrija os campos destacados."
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
                 self.page.update()
                 return
             payload = {
