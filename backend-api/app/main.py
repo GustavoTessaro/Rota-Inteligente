@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api_maps import router as maps_router
@@ -20,6 +20,7 @@ from .routers import (
     veiculos_router,
 )
 from .seed import seed_database
+from .tracking import manager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -58,3 +59,13 @@ app.include_router(maps_router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.websocket("/ws/tracking")
+async def tracking_socket(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except Exception:
+        manager.disconnect(websocket)
