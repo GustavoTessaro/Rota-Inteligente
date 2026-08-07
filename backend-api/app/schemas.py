@@ -256,6 +256,41 @@ class RotaStatusIn(BaseModel):
     combustivel_final: Decimal | None = None
 
 
+class RotaPosicaoCreate(BaseModel):
+    latitude: Decimal
+    longitude: Decimal
+    timestamp: datetime
+    velocidade: Decimal | None = None
+    heading: Decimal | None = None
+    accuracy: Decimal | None = None
+    endereco: str | None = None
+    provider: str | None = None
+    motorista_id: int | None = None
+    veiculo_id: int | None = None
+
+    @field_validator("endereco", "provider", mode="before")
+    @classmethod
+    def strip_text(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+
+class RotaPosicaoOut(ORMModel):
+    id: int
+    rota_id: int
+    latitude: Decimal
+    longitude: Decimal
+    timestamp: datetime
+    velocidade: Decimal | None = None
+    heading: Decimal | None = None
+    accuracy: Decimal | None = None
+    endereco: str | None = None
+    provider: str | None = None
+    motorista_id: int | None = None
+    veiculo_id: int | None = None
+
+
 class RotaOut(ORMModel):
     id: int
     nome: str

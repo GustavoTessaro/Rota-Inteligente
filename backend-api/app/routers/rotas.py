@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,9 +14,29 @@ from ..deps import (
     validate_organization,
     validate_route_delivery_entries,
 )
-from ..models import Endereco, Perfil, Produto, Rota, RotaEntrega, RotaHistorico, TipoEventoRota, Usuario, Veiculo
-from ..schemas import RotaCreate, RotaHistoricoOut, RotaOut, RotaStatusIn, StatusRota
+from ..models import (
+    Endereco,
+    Perfil,
+    Produto,
+    Rota,
+    RotaEntrega,
+    RotaHistorico,
+    RotaPosicao,
+    TipoEventoRota,
+    Usuario,
+    Veiculo,
+)
+from ..schemas import (
+    RotaCreate,
+    RotaHistoricoOut,
+    RotaOut,
+    RotaPosicaoCreate,
+    RotaPosicaoOut,
+    RotaStatusIn,
+    StatusRota,
+)
 from ..security import current_user
+from ..tracking import manager
 
 router = APIRouter(prefix="/rotas")
 
@@ -149,6 +170,24 @@ def update_route_status(
         ))
     commit(db)
     return rota
+
+
+@router.post("/{rota_id}/posicoes", response_model=RotaPosicaoOut, status_code=201)
+async def create_route_position(
+    rota_id: int,
+    data: RotaPosicaoCreate,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(current_user),
+):
+    rota = get_or_404(db, Rota, rota_id)
+    ensure_route_access_scope(user, rota)
+    posicao = RotaPosicao(rota_id=rota_id, **data.model_dump(exclude_none=True))
+    db.add(posicao)
+    commit(db)
+    db.refresh(posicao)
+    payload = jsonable_encoder(RotaPosicaoOut.from_orm(posicao))
+    await manager.broadcast({"type": "rota_posicao", "payload": payload})
+    return posicao
 
 
 @router.get("/{rota_id}/historico", response_model=list[RotaHistoricoOut])
