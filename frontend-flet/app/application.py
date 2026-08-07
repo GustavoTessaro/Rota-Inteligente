@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover - optional dependency during import
 
 from .api_client import ApiClient, ApiError
 from .config import build_tracking_ws_url
+from .dashboard_utils import DASHBOARD_INDICATORS, get_dashboard_indicator_values
 from .map_view import MapView
 from .tracking_client import build_marker, update_vehicle_state
 
@@ -38,6 +39,8 @@ class DeliveryApp:
         self.websocket_state = "desconectado"
         self.vehicle_states = {}
         self.connection_indicator = None
+        self.dashboard_data = {}
+        self.dashboard_active = False
         self.content = ft.Column(
             expand=True,
             scroll=ft.ScrollMode.AUTO,
@@ -50,6 +53,26 @@ class DeliveryApp:
         self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.INDIGO)
         self.page.padding = 0
         self.show_login()
+
+    def _refresh_dashboard(self):
+        if self.user is None or self.user.get("perfil") == "MOTORISTA":
+            return
+        try:
+            data = self.api.request("GET", "/relatorios/dashboard")
+            self.dashboard_data = data
+            if self.content.controls and getattr(self, "dashboard_active", False):
+                self.dashboard_view()
+        except Exception:
+            pass
+
+    def _start_dashboard_refresh_loop(self):
+        def runner():
+            while self.user is not None and getattr(self, "dashboard_active", False):
+                self._refresh_dashboard()
+                time.sleep(5)
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
 
     def _set_connection_state(self, state: str):
         self.websocket_state = state
@@ -271,11 +294,14 @@ class DeliveryApp:
         )
         self._connect_tracking_socket()
         self.page.add(ft.Row([rail, ft.VerticalDivider(width=1), self.content], expand=True))
+        self.dashboard_active = True
+        self._start_dashboard_refresh_loop()
         self.dashboard_view()
 
     def logout(self):
         self.api.token = None
         self.user = None
+        self.dashboard_active = False
         self._disconnect_tracking_socket()
         self.page.appbar = None
         self.show_login()
@@ -306,22 +332,23 @@ class DeliveryApp:
             self.deliveries_view()
             return
         try:
-            data = self.api.request("GET", "/relatorios/dashboard")
+            data = self.dashboard_data or self.api.request("GET", "/relatorios/dashboard")
+            self.dashboard_data = data
+            indicator_values = get_dashboard_indicator_values(data)
             cards = []
-            labels = [
-                ("Total de entregas hoje", "entregas_hoje", ft.Icons.CALENDAR_TODAY),
-                ("Entregas concluídas", "entregas_concluidas", ft.Icons.CHECK_CIRCLE),
-                ("Entregas em andamento", "entregas_andamento", ft.Icons.ROUTE),
-                ("Entregas atrasadas", "entregas_atrasadas", ft.Icons.WARNING),
-                ("Rotas em execução", "rotas_em_execucao", ft.Icons.DIRECTIONS_RUN),
-                ("Veículos disponíveis", "veiculos_disponiveis", ft.Icons.DIRECTIONS_CAR),
-                ("Motoristas ativos", "motoristas_ativos", ft.Icons.PERSON),
-            ]
-            for label, key, icon in labels:
+            for (label, key), icon in zip(DASHBOARD_INDICATORS, [
+                ft.Icons.CALENDAR_TODAY,
+                ft.Icons.CHECK_CIRCLE,
+                ft.Icons.ROUTE,
+                ft.Icons.WARNING,
+                ft.Icons.DIRECTIONS_RUN,
+                ft.Icons.DIRECTIONS_CAR,
+                ft.Icons.PERSON,
+            ]):
                 cards.append(ft.Container(
                     ft.Column([
                         ft.Icon(icon, color=ft.Colors.INDIGO),
-                        ft.Text(str(data.get(key, 0)), size=28, weight=ft.FontWeight.BOLD),
+                        ft.Text(str(indicator_values.get(key, 0)), size=28, weight=ft.FontWeight.BOLD),
                         ft.Text(label),
                     ]),
                     padding=18, width=220, border_radius=14, bgcolor=ft.Colors.INDIGO_50,
