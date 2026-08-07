@@ -37,24 +37,46 @@ class DeliveryApp:
         self.show_login()
 
     def notify(self, message: str, error=False):
+        color = ft.Colors.RED_700 if error else ft.Colors.GREEN_700
+
         def _close(_):
             try:
-                self.page.snack_bar.open = False
+                snack.open = False
                 self.page.update()
             except Exception:
                 pass
 
-        color = ft.Colors.RED_700 if error else ft.Colors.GREEN_700
-        self.page.snack_bar = ft.SnackBar(content=ft.Text(message), bgcolor=color,
-                                         action=ft.TextButton("Fechar", on_click=_close))
-        self.page.snack_bar.open = True
-        self.page.update()
-        # Fallback explícito: abrir diálogo de erro se for mensagem de erro
-        if error:
+        # duração maior para testes e visibilidade
+        snack = ft.SnackBar(content=ft.Text(message), bgcolor=color,
+                             action=ft.TextButton("Fechar", on_click=_close), duration=5000)
+
+        # debug log para terminal do flet
+        try:
+            print(f"[notify] message={message!r} error={error}")
+        except Exception:
+            pass
+
+        # Compatibilidade com diferentes versões do Flet
+        try:
+            if hasattr(self.page, "show_snack_bar"):
+                # API mais nova
+                self.page.show_snack_bar(snack)
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+            else:
+                # fallback: atribui à propriedade e abre
+                self.page.snack_bar = snack
+                snack.open = True
+                self.page.update()
+        except Exception:
+            # última tentativa silenciosa
             try:
-                self.show_error_dialog(message, "Erro")
+                self.page.snack_bar = snack
+                snack.open = True
+                self.page.update()
             except Exception:
-                # não bloquear por falha no diálogo de fallback
                 pass
 
     def show_login(self):
@@ -627,15 +649,16 @@ class DeliveryApp:
                 self.notify("Rota criada com sucesso.")
                 self.routes_view()
             except ApiError as exc:
-                # mantém o diálogo aberto e fornece feedback claro
+                # mantém o diálogo aberto e fornece feedback inline
+                error_message.value = str(exc)
                 self.page.update()
-                self.notify(str(exc), True)
                 return
 
+        error_message = ft.Text("", color=ft.Colors.RED_700)
         dialog = ft.AlertDialog(
             title=ft.Text("Nova Rota"),
             content=ft.Column([
-                name, description, organization, vehicle, driver, status_field, delivery,
+                error_message, name, description, organization, vehicle, driver, status_field, delivery,
             ], tight=True, width=500),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
@@ -714,6 +737,7 @@ class DeliveryApp:
             self.notify(str(exc), True)
             return
 
+        error_message = ft.Text("", color=ft.Colors.RED_700)
         license_plate = ft.TextField(label="Placa", value=(vehicle or {}).get("placa", ""))
         model = ft.TextField(label="Modelo", value=(vehicle or {}).get("modelo", ""))
         brand = ft.TextField(label="Marca", value=(vehicle or {}).get("marca", ""))
@@ -764,8 +788,8 @@ class DeliveryApp:
                 self.set_error(organization, "Selecione a organização.")
                 valid = False
             if not valid:
+                error_message.value = "Corrija os campos destacados."
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
                 return
             try:
                 payload = {
@@ -794,21 +818,26 @@ class DeliveryApp:
                 self.notify(message)
                 self.vehicles_view()
             except ApiError as exc:
-                # mantém diálogo aberto e mostra feedback
+                error_message.value = str(exc)
                 self.page.update()
-                self.notify(str(exc), True)
                 return
             except ValueError:
                 self.notify("Informe valores numéricos válidos para ano, carga, volume e quilometragem.", True)
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar veículo" if vehicle else "Novo veículo"),
-            content=ft.Column([
-                license_plate, model, brand, year, color,
-                capacity_weight, capacity_volume, type_field, status_field, mileage,
-                driver, organization if self.user["perfil"] == "ADMIN" else ft.Row(),
-                active,
-            ], tight=True, width=440),
+            content=ft.Container(
+                ft.Column([
+                    error_message,
+                    license_plate, model, brand, year, color,
+                    capacity_weight, capacity_volume, type_field, status_field, mileage,
+                    driver, organization if self.user["perfil"] == "ADMIN" else ft.Row(),
+                    active,
+                ], tight=True),
+                width=440,
+                height=420,
+                scroll=ft.ScrollMode.AUTO,
+            ),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -880,6 +909,8 @@ class DeliveryApp:
         except ApiError as exc:
             self.notify(str(exc), True)
             return
+        error_message = ft.Text("", color=ft.Colors.RED_700)
+
         order = ft.Dropdown(
             label="Pedido",
             value=str(delivery["pedido_id"]) if delivery else None,
@@ -924,8 +955,8 @@ class DeliveryApp:
                     self.set_error(due, "Use o formato YYYY-MM-DDTHH:MM:SS.")
                     valid = False
             if not valid:
+                error_message.value = "Corrija os campos destacados."
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
                 return
             payload = {
                 "pedido_id": int(order.value),
@@ -946,11 +977,13 @@ class DeliveryApp:
                 self.notify(message)
                 self.deliveries_view()
             except ApiError as exc:
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                error_message.value = str(exc)
+                self.page.update()
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar entrega" if delivery else "Nova entrega"),
-            content=ft.Column([order, driver, origin, destination, due, notes], tight=True, width=460),
+            content=ft.Column([error_message, order, driver, origin, destination, due, notes], tight=True, width=460),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -962,6 +995,7 @@ class DeliveryApp:
             receipt = self.api.request("GET", f"/entregas/{delivery_id}/comprovante")
         except ApiError:
             receipt = None
+        error_message = ft.Text("", color=ft.Colors.RED_700)
         name = ft.TextField(label="Nome do recebedor", value=(receipt or {}).get("nome_recebedor", ""))
         document = ft.TextField(label="Documento", value=(receipt or {}).get("documento_recebedor", ""))
         note = ft.TextField(label="Observação", value=(receipt or {}).get("observacao") or "", multiline=True)
@@ -973,8 +1007,8 @@ class DeliveryApp:
                 self.require_text(document, "Informe pelo menos 3 caracteres.", 3),
             ])
             if not valid:
+                error_message.value = "Corrija os campos destacados."
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
                 return
             try:
                 payload = {
@@ -993,8 +1027,10 @@ class DeliveryApp:
                 self.notify(message)
                 self.deliveries_view()
             except ApiError as exc:
-                self.close_dialog(dialog)
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                # mantém diálogo aberto com os valores e exibe feedback inline
+                error_message.value = str(exc)
+                self.page.update()
+                return
 
         def delete(_):
             try:
@@ -1003,8 +1039,9 @@ class DeliveryApp:
                 self.notify("Comprovante excluído.")
                 self.deliveries_view()
             except ApiError as exc:
-                self.close_dialog(dialog)
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                error_message.value = str(exc)
+                self.page.update()
+                return
 
         actions = [ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog))]
         if receipt:
@@ -1012,7 +1049,7 @@ class DeliveryApp:
         actions.append(ft.FilledButton("Salvar", on_click=save))
         dialog = ft.AlertDialog(
             title=ft.Text("Editar comprovante" if receipt else "Comprovante de entrega"),
-            content=ft.Column([name, document, note], tight=True, width=360),
+            content=ft.Column([error_message, name, document, note], tight=True, width=360),
             actions=actions,
         )
         self.open_dialog(dialog)
@@ -1077,6 +1114,7 @@ class DeliveryApp:
         self.open_dialog(dialog)
 
     def incident_dialog(self, delivery, incident=None, parent_dialog=None):
+        error_message = ft.Text("", color=ft.Colors.RED_700)
         kind = ft.TextField(label="Tipo", value=(incident or {}).get("tipo", ""))
         description = ft.TextField(label="Descrição", value=(incident or {}).get("descricao", ""), multiline=True)
 
@@ -1088,8 +1126,8 @@ class DeliveryApp:
                 self.require_text(description, "Informe pelo menos 5 caracteres.", 5),
             ])
             if not valid:
+                error_message.value = "Corrija os campos destacados."
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
                 return
             try:
                 if incident:
@@ -1108,12 +1146,13 @@ class DeliveryApp:
                 self.notify(message)
                 self.incidents_dialog(delivery)
             except ApiError as exc:
-                self.close_dialog(dialog)
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                error_message.value = str(exc)
+                self.page.update()
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar ocorrência" if incident else "Nova ocorrência"),
-            content=ft.Column([kind, description], tight=True, width=420),
+            content=ft.Column([error_message, kind, description], tight=True, width=420),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1126,8 +1165,10 @@ class DeliveryApp:
             self.notify("Ocorrência excluída.")
             self.incidents_dialog(delivery)
         except ApiError as exc:
-            parent_dialog.open = False
-            self.show_error_dialog(str(exc), "Não foi possível excluir")
+            # mantém diálogo pai aberto e notifica o erro
+            self.page.update()
+            self.notify(str(exc), True)
+            return
 
     def close_dialog(self, dialog, update=True):
         self.page.close(dialog)
@@ -1369,6 +1410,7 @@ class DeliveryApp:
             self.notify(str(exc), True)
 
     def organization_dialog(self, organization=None):
+        error_message = ft.Text("", color=ft.Colors.RED_700)
         name = ft.TextField(label="Nome", value=(organization or {}).get("nome", ""))
         cnpj = ft.TextField(label="CNPJ", value=(organization or {}).get("cnpj") or "")
         email = ft.TextField(label="E-mail", value=(organization or {}).get("email") or "")
@@ -1396,7 +1438,8 @@ class DeliveryApp:
 
         def save(_):
             if not validate():
-                self.notify("Corrija os campos destacados.", True)
+                error_message.value = "Corrija os campos destacados."
+                self.page.update()
                 return
             payload = {
                 "nome": name.value.strip(),
@@ -1417,12 +1460,13 @@ class DeliveryApp:
                 self.notify(message)
                 self.organizations_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                error_message.value = str(exc)
+                self.page.update()
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar organização" if organization else "Nova organização"),
-            content=ft.Column([name, cnpj, email, phone, address, active], tight=True, width=420),
+            content=ft.Column([error_message, name, cnpj, email, phone, address, active], tight=True, width=420),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1436,8 +1480,9 @@ class DeliveryApp:
                 self.notify("Organização excluída.")
                 self.organizations_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir organização"),
@@ -1450,6 +1495,7 @@ class DeliveryApp:
         self.open_dialog(dialog)
 
     def client_dialog(self, client=None):
+        error_message = ft.Text("", color=ft.Colors.RED_700)
         name = ft.TextField(label="Nome", value=(client or {}).get("nome", ""))
         document = ft.TextField(label="CPF/CNPJ", value=(client or {}).get("cpf_cnpj") or "")
         email = ft.TextField(label="E-mail", value=(client or {}).get("email") or "")
@@ -1488,7 +1534,8 @@ class DeliveryApp:
 
         def save(_):
             if not validate():
-                self.notify("Corrija os campos destacados.", True)
+                error_message.value = "Corrija os campos destacados."
+                self.page.update()
                 return
             payload = {
                 "nome": name.value.strip(),
@@ -1508,12 +1555,13 @@ class DeliveryApp:
                 self.notify(message)
                 self.clients_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                error_message.value = str(exc)
+                self.page.update()
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar cliente" if client else "Novo cliente"),
-            content=ft.Column([name, document, email, phone, notes], tight=True, width=360),
+            content=ft.Column([error_message, name, document, email, phone, notes], tight=True, width=360),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1559,6 +1607,7 @@ class DeliveryApp:
         self.open_dialog(dialog)
 
     def address_dialog(self, client, parent_dialog=None, address=None):
+        error_message = ft.Text("", color=ft.Colors.RED_700)
         street = ft.TextField(label="Logradouro", value=(address or {}).get("logradouro", ""))
         number = ft.TextField(label="Número", value=(address or {}).get("numero", ""))
         complement = ft.TextField(label="Complemento", value=(address or {}).get("complemento") or "")
@@ -1589,8 +1638,8 @@ class DeliveryApp:
                 self.set_error(zip_code, "Informe o CEP com 8 dígitos.")
                 valid = False
             if not valid:
+                error_message.value = "Corrija os campos destacados."
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
                 return
             payload = {
                 "logradouro": street.value.strip(),
@@ -1613,18 +1662,19 @@ class DeliveryApp:
                 else:
                     self.api.request("POST", f'/clientes/{client["id"]}/enderecos', json=payload)
                     message = "Endereço cadastrado."
-                dialog.open = False
+                self.close_dialog(dialog)
                 if parent_dialog:
-                    parent_dialog.open = False
+                    self.close_dialog(parent_dialog)
                 self.notify(message)
                 self.addresses_dialog(client)
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                error_message.value = str(exc)
+                self.page.update()
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar endereço" if address else "Novo endereço"),
-            content=ft.Column([street, number, complement, district, city, state, zip_code, kind], tight=True, width=420),
+            content=ft.Column([error_message, street, number, complement, district, city, state, zip_code, kind], tight=True, width=420),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1639,8 +1689,9 @@ class DeliveryApp:
                 self.notify("Endereço excluído.")
                 self.addresses_dialog(client)
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir endereço"),
@@ -1668,8 +1719,9 @@ class DeliveryApp:
                 self.notify("Cliente excluído.")
                 self.clients_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir cliente"),
@@ -1744,6 +1796,7 @@ class DeliveryApp:
             self.notify(str(exc), True)
 
     def product_dialog(self, product=None):
+        error_message = ft.Text("", color=ft.Colors.RED_700)
         name = ft.TextField(label="Nome", value=(product or {}).get("nome", ""))
         description = ft.TextField(label="Descrição", value=(product or {}).get("descricao") or "", multiline=True)
         weight = ft.TextField(label="Peso", value=str((product or {}).get("peso") or "0"))
@@ -1759,8 +1812,8 @@ class DeliveryApp:
                 self.validate_positive_number(declared, "Informe um valor igual ou maior que zero."),
             ])
             if not valid:
+                error_message.value = "Corrija os campos destacados."
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
                 return
             payload = {
                 "nome": name.value.strip(),
@@ -1776,16 +1829,17 @@ class DeliveryApp:
                 else:
                     self.api.request("POST", "/produtos", json=payload)
                     message = "Produto cadastrado."
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify(message)
                 self.products_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                error_message.value = str(exc)
+                self.page.update()
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar produto" if product else "Novo produto"),
-            content=ft.Column([name, description, weight, volume, declared], tight=True, width=380),
+            content=ft.Column([error_message, name, description, weight, volume, declared], tight=True, width=380),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1807,8 +1861,9 @@ class DeliveryApp:
                 self.notify("Produto excluído.")
                 self.products_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir produto"),
@@ -1905,6 +1960,7 @@ class DeliveryApp:
             value=str((user or {}).get("organizacao_id")) if (user or {}).get("organizacao_id") else None,
             options=[],
         )
+        error_message = ft.Text("", color=ft.Colors.RED_700)
 
         def load_organizations():
             try:
@@ -1937,9 +1993,9 @@ class DeliveryApp:
                     self.set_error(password, "A nova senha deve ter pelo menos 6 caracteres.")
                     errors.append("Senha: a nova senha deve ter pelo menos 6 caracteres.")
             if errors:
-                # mostra mensagens específicas para o usuário e mantém o diálogo aberto
+                # mostra mensagens específicas dentro do diálogo e mantém os campos
+                error_message.value = "; ".join(errors)
                 self.page.update()
-                self.notify("; ".join(errors), True)
                 return
             payload = {
                 "nome": name.value.strip(),
@@ -1961,16 +2017,15 @@ class DeliveryApp:
                 self.notify(message)
                 self.users_view()
             except ApiError as exc:
-                # não fecha o diálogo automaticamente; mostra erro detalhado ao usuário
+                # não fecha o diálogo automaticamente; mostra erro detalhado dentro do diálogo
                 err_msg = str(exc)
-                # se o backend retornou mensagens separadas por "; ", exibi-las separadamente
+                error_message.value = f"Não foi possível salvar: {err_msg}"
                 self.page.update()
-                self.notify(f"Não foi possível salvar: {err_msg}", True)
                 return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar usuário" if user else "Novo usuário"),
-            content=ft.Column([name, email, password, phone, profile, organization], tight=True, width=380),
+            content=ft.Column([error_message, name, email, password, phone, profile, organization], tight=True, width=380),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1992,8 +2047,9 @@ class DeliveryApp:
                 self.notify("Usuário excluído.")
                 self.users_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir usuário"),
@@ -2202,8 +2258,9 @@ class DeliveryApp:
             self.notify("Item removido.")
             self.order_items_dialog(order)
         except ApiError as exc:
-            self.close_dialog(parent_dialog, update=False)
-            self.show_error_dialog(str(exc), "Não foi possível excluir")
+            self.page.update()
+            self.notify(str(exc), True)
+            return
 
     def confirm_delete_order(self, order):
         def delete(_):
@@ -2213,8 +2270,9 @@ class DeliveryApp:
                 self.notify("Pedido excluído.")
                 self.orders_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível excluir")
+                self.page.update()
+                self.notify(str(exc), True)
+                return
 
         dialog = ft.AlertDialog(
             title=ft.Text("Excluir pedido"),
@@ -2331,6 +2389,8 @@ class DeliveryApp:
             price.value = "0"
             refresh_items()
 
+        error_message = ft.Text("", color=ft.Colors.RED_700)
+
         def save(_):
             self.clear_errors(client, priority)
             valid = all([
@@ -2341,8 +2401,8 @@ class DeliveryApp:
                 self.set_error(product, "Adicione pelo menos um item.")
                 valid = False
             if not valid:
+                error_message.value = "Corrija os campos destacados."
                 self.page.update()
-                self.notify("Corrija os campos destacados.", True)
                 return
             payload = {
                 "cliente_id": int(client.value),
@@ -2362,12 +2422,13 @@ class DeliveryApp:
                 method = "PUT" if order else "POST"
                 path = f'/pedidos/{order["id"]}' if order else "/pedidos"
                 self.api.request(method, path, json=payload)
-                dialog.open = False
+                self.close_dialog(dialog)
                 self.notify("Pedido atualizado." if order else "Pedido cadastrado.")
                 self.orders_view()
             except ApiError as exc:
-                dialog.open = False
-                self.show_error_dialog(str(exc), "Não foi possível salvar")
+                error_message.value = str(exc)
+                self.page.update()
+                return
             except ValueError as exc:
                 self.notify(str(exc), True)
 
@@ -2385,5 +2446,7 @@ class DeliveryApp:
                      ft.FilledButton("Salvar", on_click=save)],
         )
         refresh_items()
+        # inserir mensagem de erro no topo do diálogo
+        dialog.content.controls.insert(0, error_message)
         self.open_dialog(dialog)
 
