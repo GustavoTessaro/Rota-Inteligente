@@ -162,3 +162,4 @@ pytest -q
 - O modelo `RotaPosicao` existe, mas não há endpoints públicos de rastreamento em tempo real.
 - Para apresentação, mantenha `USE_GOOGLE_ROUTE_OPTIMIZATION=false` se não houver uma integração real configurada.
 - Antes de publicar, troque `JWT_SECRET` e a senha inicial do usuário administrador.
+
