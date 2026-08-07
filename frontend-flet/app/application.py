@@ -1,11 +1,21 @@
 ﻿from datetime import datetime
 from urllib.parse import quote
 
-import flet as ft
+import asyncio
 import json
+import threading
+import time
+
+import flet as ft
+
+try:
+    import websockets
+except Exception:  # pragma: no cover - optional dependency during import
+    websockets = None
 
 from .api_client import ApiClient, ApiError
 from .map_view import MapView
+from .tracking_client import build_marker, update_vehicle_state
 
 
 STATUS_COLORS = {
@@ -23,6 +33,10 @@ class DeliveryApp:
         self.page = page
         self.api = ApiClient()
         self.user = None
+        self.websocket_client = None
+        self.websocket_state = "desconectado"
+        self.vehicle_states = {}
+        self.connection_indicator = None
         self.content = ft.Column(
             expand=True,
             scroll=ft.ScrollMode.AUTO,
@@ -35,6 +49,86 @@ class DeliveryApp:
         self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.INDIGO)
         self.page.padding = 0
         self.show_login()
+
+    def _set_connection_state(self, state: str):
+        self.websocket_state = state
+        if self.connection_indicator is not None:
+            self.connection_indicator.content = ft.Text(
+                {
+                    "conectado": "● Conectado",
+                    "reconectando": "● Reconectando",
+                    "desconectado": "● Desconectado",
+                }[state],
+                color={
+                    "conectado": ft.Colors.GREEN,
+                    "reconectando": ft.Colors.ORANGE,
+                    "desconectado": ft.Colors.RED,
+                }[state],
+            )
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
+    def _refresh_map_markers(self):
+        if not getattr(self, "map_control", None):
+            return
+        markers = [build_marker(state) for state in self.vehicle_states.values() if state.get("latitude") is not None and state.get("longitude") is not None]
+        try:
+            if hasattr(self.map_control, "set_markers"):
+                self.map_control.set_markers(markers)
+            else:
+                self.map_control.eval_js(f"window.postMessage({json.dumps({'action': 'clear'})}, '*');")
+                self.map_control.eval_js(f"window.postMessage({json.dumps({'action': 'markers', 'markers': markers})}, '*');")
+        except Exception:
+            pass
+
+    def _connect_tracking_socket(self):
+        if self.websocket_client is not None or websockets is None:
+            return
+
+        def runner():
+            self._set_connection_state("reconectando")
+            while self.user is not None:
+                try:
+                    async def _listen():
+                        async with websockets.connect("ws://127.0.0.1:8000/ws/tracking") as ws:
+                            self.websocket_client = ws
+                            self._set_connection_state("conectado")
+                            async for raw_message in ws:
+                                if not raw_message:
+                                    break
+                                try:
+                                    data = json.loads(raw_message)
+                                except Exception:
+                                    continue
+                                self.vehicle_states = update_vehicle_state(self.vehicle_states, data)
+                                self._refresh_map_markers()
+
+                    asyncio.run(_listen())
+                except Exception:
+                    self.websocket_client = None
+                    if self.user is not None:
+                        self._set_connection_state("reconectando")
+                        time.sleep(3)
+                    else:
+                        break
+            self.websocket_client = None
+            if self.user is None:
+                self._set_connection_state("desconectado")
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+
+    def _disconnect_tracking_socket(self):
+        self.user = None
+        if self.websocket_client is not None:
+            try:
+                self.websocket_client.close()
+            except Exception:
+                pass
+            self.websocket_client = None
+        self._set_connection_state("desconectado")
 
     def notify(self, message: str, error=False):
         color = ft.Colors.RED_700 if error else ft.Colors.GREEN_700
@@ -162,19 +256,26 @@ class DeliveryApp:
         self.page.clean()
         self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
         self.page.vertical_alignment = ft.MainAxisAlignment.START
+        self.connection_indicator = ft.Container(
+            content=ft.Text("● Desconectado", color=ft.Colors.RED),
+            padding=12,
+        )
         self.page.appbar = ft.AppBar(
             title=ft.Text("Gestão de Entregas"),
             actions=[
+                self.connection_indicator,
                 ft.Container(ft.Text(f'{self.user["nome"]} · {self.user["perfil"]}'), padding=12),
                 ft.IconButton(ft.Icons.LOGOUT, tooltip="Sair", on_click=lambda _: self.logout()),
             ],
         )
+        self._connect_tracking_socket()
         self.page.add(ft.Row([rail, ft.VerticalDivider(width=1), self.content], expand=True))
         self.dashboard_view()
 
     def logout(self):
         self.api.token = None
         self.user = None
+        self._disconnect_tracking_socket()
         self.page.appbar = None
         self.show_login()
 
