@@ -1,15 +1,23 @@
 import importlib.util
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "app" / "tracking_client.py"
-SPEC = importlib.util.spec_from_file_location("frontend_tracking_client", MODULE_PATH)
-TRACKING_CLIENT = importlib.util.module_from_spec(SPEC)
-assert SPEC.loader is not None
-SPEC.loader.exec_module(TRACKING_CLIENT)
+ROOT = Path(__file__).resolve().parents[1]
+MODULE_PATH = ROOT / "app" / "tracking_client.py"
+TRACKING_SPEC = importlib.util.spec_from_file_location("frontend_tracking_client", MODULE_PATH)
+TRACKING_CLIENT = importlib.util.module_from_spec(TRACKING_SPEC)
+assert TRACKING_SPEC.loader is not None
+TRACKING_SPEC.loader.exec_module(TRACKING_CLIENT)
+
+CONFIG_PATH = ROOT / "app" / "config.py"
+CONFIG_SPEC = importlib.util.spec_from_file_location("frontend_config", CONFIG_PATH)
+CONFIG_MODULE = importlib.util.module_from_spec(CONFIG_SPEC)
+assert CONFIG_SPEC.loader is not None
+CONFIG_SPEC.loader.exec_module(CONFIG_MODULE)
 
 build_marker = TRACKING_CLIENT.build_marker
 parse_position_message = TRACKING_CLIENT.parse_position_message
 update_vehicle_state = TRACKING_CLIENT.update_vehicle_state
+build_tracking_ws_url = CONFIG_MODULE.build_tracking_ws_url
 
 
 def test_parse_position_message_accepts_valid_payload():
@@ -61,3 +69,8 @@ def test_build_marker_uses_vehicle_state_fields():
     assert marker["lng"] == -2
     assert marker["speed"] == 7.5
     assert marker["heading"] == 180
+
+
+def test_build_tracking_ws_url_uses_api_base_url():
+    assert build_tracking_ws_url("http://127.0.0.1:8000/api") == "ws://127.0.0.1:8000/ws/tracking"
+    assert build_tracking_ws_url("https://example.com/api") == "wss://example.com/ws/tracking"

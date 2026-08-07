@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover - optional dependency during import
     websockets = None
 
 from .api_client import ApiClient, ApiError
+from .config import build_tracking_ws_url
 from .map_view import MapView
 from .tracking_client import build_marker, update_vehicle_state
 
@@ -92,7 +93,7 @@ class DeliveryApp:
             while self.user is not None:
                 try:
                     async def _listen():
-                        async with websockets.connect("ws://127.0.0.1:8000/ws/tracking") as ws:
+                        async with websockets.connect(build_tracking_ws_url()) as ws:
                             self.websocket_client = ws
                             self._set_connection_state("conectado")
                             async for raw_message in ws:
