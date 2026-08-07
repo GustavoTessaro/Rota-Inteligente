@@ -259,6 +259,13 @@ class DeliveryApp:
             ]
 
         def navigate(event):
+            selected_index = event.control.selected_index
+            self.dashboard_active = selected_index == 0
+            if self.dashboard_active:
+                self._start_dashboard_refresh_loop()
+            else:
+                self.dashboard_refresh_controller.stop()
+
             actions = [self.dashboard_view, self.deliveries_view, self.routes_view, self.vehicles_view]
             if not driver:
                 actions += [self.clients_view]
@@ -268,7 +275,7 @@ class DeliveryApp:
                     self.orders_view, self.products_view,
                     self.reports_view, self.users_view,
                 ]
-            actions[event.control.selected_index]()
+            actions[selected_index]()
 
         rail = ft.NavigationRail(
             selected_index=0, destinations=destinations, on_change=navigate,
