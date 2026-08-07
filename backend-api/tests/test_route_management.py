@@ -101,6 +101,59 @@ def test_route_lifecycle_and_tracking_integration(client: TestClient, admin_head
     assert cancel_response.status_code == 422
 
 
+def test_route_can_be_paused_and_resumed_with_progress(client: TestClient, admin_headers: dict) -> None:
+    organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
+    vehicles = client.get("/api/veiculos", headers=admin_headers).json()
+    users = client.get("/api/usuarios", headers=admin_headers).json()
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
+
+    vehicle = next(item for item in vehicles if item["ativo"])
+    driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
+
+    create_response = client.post(
+        "/api/rotas",
+        headers=admin_headers,
+        json={
+            "nome": "Rota para pausa",
+            "descricao": "Validar pausa e retomada",
+            "organizacao_id": organizations[0]["id"],
+            "veiculo_id": vehicle["id"],
+            "motorista_id": driver["id"],
+            "status": "PLANEJADA",
+            "entregas": [{"entrega_id": deliveries[0]["id"], "ordem_visita": 1}],
+        },
+    )
+    assert create_response.status_code == 201
+    route = create_response.json()
+
+    start_response = client.patch(
+        f"/api/rotas/{route['id']}/status",
+        headers=admin_headers,
+        json={"status": "EM_EXECUCAO", "evento": "PARTIDA", "observacao": "Iniciando"},
+    )
+    assert start_response.status_code == 200
+
+    paused_response = client.patch(
+        f"/api/rotas/{route['id']}/status",
+        headers=admin_headers,
+        json={"status": "PAUSADA", "observacao": "Pausando por manutenção"},
+    )
+    assert paused_response.status_code == 200
+    assert paused_response.json()["status"] == "PAUSADA"
+
+    resumed_response = client.patch(
+        f"/api/rotas/{route['id']}/status",
+        headers=admin_headers,
+        json={"status": "EM_EXECUCAO", "progresso_percentual": 45, "observacao": "Retomando"},
+    )
+    assert resumed_response.status_code == 200
+    assert resumed_response.json()["status"] == "EM_EXECUCAO"
+    assert resumed_response.json()["progresso_percentual"] == 45
+
+    history = client.get(f'/api/rotas/{route["id"]}/historico', headers=admin_headers).json()
+    assert [item["evento"] for item in history][-2:] == ["PAUSA", "RETOMADA"]
+
+
 def test_route_start_requires_vehicle_and_driver(client: TestClient, admin_headers: dict) -> None:
     vehicles = client.get("/api/veiculos", headers=admin_headers).json()
     organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()

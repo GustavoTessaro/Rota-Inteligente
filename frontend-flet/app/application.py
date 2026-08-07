@@ -558,15 +558,19 @@ class DeliveryApp:
             "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
         ]
 
-    def change_route_status(self, route, new_status):
+    def change_route_status(self, route, new_status, progress=None, event=None, observation=None):
         try:
             payload = {"status": new_status}
             if new_status == "EM_EXECUCAO":
-                payload.update({"evento": "PARTIDA", "observacao": "Iniciada pela interface"})
+                payload.update({"evento": event or "PARTIDA", "observacao": observation or "Iniciada pela interface"})
+            elif new_status == "PAUSADA":
+                payload.update({"evento": event or "PAUSA", "observacao": observation or "Pausada pela interface"})
             elif new_status == "FINALIZADA":
-                payload.update({"evento": "FINALIZADA", "observacao": "Concluída pela interface"})
+                payload.update({"evento": event or "FINALIZADA", "observacao": observation or "Concluída pela interface"})
             elif new_status == "CANCELADA":
-                payload.update({"evento": "FINALIZADA", "observacao": "Cancelada pela interface"})
+                payload.update({"evento": event or "FINALIZADA", "observacao": observation or "Cancelada pela interface"})
+            if progress is not None:
+                payload["progresso_percentual"] = max(0, min(100, int(progress)))
             self.api.request("PATCH", f"/rotas/{route['id']}/status", json=payload)
             self.notify("Status da rota atualizado.")
             self.routes_view()
@@ -602,6 +606,20 @@ class DeliveryApp:
                         on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO"),
                     ),
                     ft.IconButton(
+                        ft.Icons.PAUSE,
+                        tooltip="Pausar rota",
+                        visible=self.user["perfil"] != "MOTORISTA",
+                        disabled=status != "EM_EXECUCAO",
+                        on_click=lambda _, rota=item: self.change_route_status(rota, "PAUSADA", event="PAUSA", observation="Pausada pela interface"),
+                    ),
+                    ft.IconButton(
+                        ft.Icons.PLAY_ARROW,
+                        tooltip="Retomar rota",
+                        visible=self.user["perfil"] != "MOTORISTA",
+                        disabled=status != "PAUSADA",
+                        on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO", event="RETOMADA", observation="Retomada pela interface"),
+                    ),
+                    ft.IconButton(
                         ft.Icons.DONE,
                         tooltip="Concluir rota",
                         visible=self.user["perfil"] != "MOTORISTA",
@@ -621,7 +639,7 @@ class DeliveryApp:
                     title=ft.Text(f'{item["nome"]} · {status.replace("_", " ")}'),
                     subtitle=ft.Text(
                         f'Veículo: {item["veiculo_id"] or "-"} · Motorista: {item["motorista_id"] or "-"} '
-                        f'· Entregas: {len(item.get("entregas") or [])}'
+                        f'· Entregas: {len(item.get("entregas") or [])} · Progresso: {item.get("progresso_percentual") or 0}%'
                     ),
                     trailing=ft.Row(actions, tight=True),
                 ))
@@ -655,6 +673,7 @@ class DeliveryApp:
             self.notify(str(exc), True)
 
     def route_details_dialog(self, route):
+        progress = int(route.get("progresso_percentual") or 0)
         content = ft.Column([
             ft.Text(f'Nome: {route["nome"]}'),
             ft.Text(f'Descrição: {route.get("descricao") or "-"}'),
@@ -664,13 +683,17 @@ class DeliveryApp:
             ft.Text(f'Organização: {route.get("organizacao_id")}'),
             ft.Text(f'Entregas: {len(route.get("entregas") or [])}'),
             ft.Text(f'Data planejada: {route.get("data_planejada") or "-"}'),
+            ft.Text(f'Progresso: {progress}%'),
+            ft.ProgressBar(value=min(max(progress / 100, 0), 1), bar_height=8),
         ], tight=True)
         dialog = ft.AlertDialog(
             title=ft.Text(f'Rota #{route["id"]}'),
             content=content,
             actions=[
                 ft.TextButton("Fechar", on_click=lambda _: self.close_dialog(dialog)),
-                ft.FilledButton("Iniciar", visible=self.user["perfil"] != "MOTORISTA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "EM_EXECUCAO"))),
+                ft.FilledButton("Iniciar", visible=self.user["perfil"] != "MOTORISTA" and route.get("status") not in {"EM_EXECUCAO", "FINALIZADA", "CANCELADA"}, on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "EM_EXECUCAO"))),
+                ft.FilledButton("Pausar", visible=self.user["perfil"] != "MOTORISTA" and route.get("status") == "EM_EXECUCAO", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "PAUSADA", event="PAUSA", observation="Pausada pela interface"))),
+                ft.FilledButton("Retomar", visible=self.user["perfil"] != "MOTORISTA" and route.get("status") == "PAUSADA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "EM_EXECUCAO", event="RETOMADA", observation="Retomada pela interface"))),
                 ft.FilledButton("Concluir", visible=self.user["perfil"] != "MOTORISTA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "FINALIZADA"))),
                 ft.FilledButton("Cancelar", visible=self.user["perfil"] != "MOTORISTA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "CANCELADA"))),
                 ft.FilledButton("Mostrar no mapa", on_click=lambda _: (self.close_dialog(dialog), self.show_route_on_map(route)))

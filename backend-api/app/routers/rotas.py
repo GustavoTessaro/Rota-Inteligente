@@ -244,9 +244,22 @@ def update_route_status(
         rota.data_inicio = rota.data_inicio or datetime.utcnow()
     if data.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA} and rota.data_conclusao is None:
         rota.data_conclusao = datetime.utcnow()
-    if data.evento is not None or data.observacao is not None or data.entrega_id is not None:
+
+    event = data.evento
+    if event is None:
+        if previous_status == StatusRota.EM_EXECUCAO and data.status == StatusRota.PAUSADA:
+            event = TipoEventoRota.PAUSA
+        elif previous_status == StatusRota.PAUSADA and data.status == StatusRota.EM_EXECUCAO:
+            event = TipoEventoRota.RETOMADA
+        elif data.status == StatusRota.FINALIZADA:
+            event = TipoEventoRota.FINALIZADA
+        elif data.status == StatusRota.EM_EXECUCAO and previous_status != StatusRota.EM_EXECUCAO:
+            event = TipoEventoRota.PARTIDA
+
+    should_log = previous_status != rota.status or data.evento is not None or data.observacao is not None or data.entrega_id is not None
+    if should_log:
         rota.historico.append(RotaHistorico(
-            evento=data.evento or TipoEventoRota.PARTIDA,
+            evento=event or TipoEventoRota.PARTIDA,
             status_anterior=previous_status.value if previous_status else None,
             status_novo=data.status.value,
             observacao=data.observacao,
