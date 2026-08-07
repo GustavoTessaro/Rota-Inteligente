@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
@@ -147,6 +149,25 @@ def update_route_status(
         raise HTTPException(422, "Somente administrador pode reabrir rota cancelada")
     if data.status == StatusRota.CANCELADA and rota.status == StatusRota.FINALIZADA:
         raise HTTPException(422, "Rota finalizada não pode ser cancelada")
+    if data.status == StatusRota.EM_EXECUCAO:
+        if rota.veiculo_id is None:
+            raise HTTPException(422, "Rota precisa de um veículo associado para iniciar")
+        if rota.motorista_id is None:
+            raise HTTPException(422, "Rota precisa de um motorista associado para iniciar")
+        vehicle = get_or_404(db, Veiculo, rota.veiculo_id)
+        driver = get_or_404(db, Usuario, rota.motorista_id)
+        if vehicle.organizacao_id != rota.organizacao_id:
+            raise HTTPException(422, "Veículo associado não pertence à organização da rota")
+        if driver.perfil != Perfil.MOTORISTA or not driver.ativo:
+            raise HTTPException(422, "Motorista associado deve estar ativo e com perfil MOTORISTA")
+        if vehicle.motorista_id is not None and vehicle.motorista_id != driver.id:
+            raise HTTPException(422, "Veículo associado deve estar compatível com o motorista da rota")
+    if data.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA} and rota.status not in {
+        StatusRota.EM_EXECUCAO,
+        StatusRota.PAUSADA,
+        StatusRota.PRONTA,
+    }:
+        raise HTTPException(422, "Só é possível concluir ou cancelar uma rota em execução, pausada ou pronta")
     previous_status = rota.status
     if data.distancia_real is not None:
         rota.distancia_real = data.distancia_real
@@ -159,6 +180,10 @@ def update_route_status(
     if data.combustivel_final is not None:
         rota.combustivel_final = data.combustivel_final
     rota.status = data.status
+    if data.status == StatusRota.EM_EXECUCAO and previous_status != StatusRota.EM_EXECUCAO:
+        rota.data_inicio = rota.data_inicio or datetime.utcnow()
+    if data.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA} and rota.data_conclusao is None:
+        rota.data_conclusao = datetime.utcnow()
     if data.evento is not None or data.observacao is not None or data.entrega_id is not None:
         rota.historico.append(RotaHistorico(
             evento=data.evento or TipoEventoRota.PARTIDA,

@@ -552,6 +552,27 @@ class DeliveryApp:
         except ApiError as exc:
             self.notify(str(exc), True)
 
+    def route_status_options(self):
+        return [
+            "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO",
+            "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
+        ]
+
+    def change_route_status(self, route, new_status):
+        try:
+            payload = {"status": new_status}
+            if new_status == "EM_EXECUCAO":
+                payload.update({"evento": "PARTIDA", "observacao": "Iniciada pela interface"})
+            elif new_status == "FINALIZADA":
+                payload.update({"evento": "FINALIZADA", "observacao": "Concluída pela interface"})
+            elif new_status == "CANCELADA":
+                payload.update({"evento": "FINALIZADA", "observacao": "Cancelada pela interface"})
+            self.api.request("PATCH", f"/rotas/{route['id']}/status", json=payload)
+            self.notify("Status da rota atualizado.")
+            self.routes_view()
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
     def routes_view(self, offset=0, status_filter=""):
         page_size = 10
         try:
@@ -562,10 +583,7 @@ class DeliveryApp:
             status_dropdown = ft.Dropdown(
                 label="Status",
                 value=status_filter or None,
-                options=[self.option(value) for value in [
-                    "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO",
-                    "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
-                ]],
+                options=[self.option(value) for value in self.route_status_options()],
             )
             rows = []
             for item in routes:
@@ -575,6 +593,27 @@ class DeliveryApp:
                         ft.Icons.INFO,
                         tooltip="Detalhes da rota",
                         on_click=lambda _, rota=item: self.route_details_dialog(rota),
+                    ),
+                    ft.IconButton(
+                        ft.Icons.PLAY_ARROW,
+                        tooltip="Iniciar rota",
+                        visible=self.user["perfil"] != "MOTORISTA",
+                        disabled=status in {"EM_EXECUCAO", "FINALIZADA", "CANCELADA"},
+                        on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO"),
+                    ),
+                    ft.IconButton(
+                        ft.Icons.DONE,
+                        tooltip="Concluir rota",
+                        visible=self.user["perfil"] != "MOTORISTA",
+                        disabled=status not in {"EM_EXECUCAO", "PAUSADA", "PRONTA"},
+                        on_click=lambda _, rota=item: self.change_route_status(rota, "FINALIZADA"),
+                    ),
+                    ft.IconButton(
+                        ft.Icons.CANCEL,
+                        tooltip="Cancelar rota",
+                        visible=self.user["perfil"] != "MOTORISTA",
+                        disabled=status in {"FINALIZADA", "CANCELADA"},
+                        on_click=lambda _, rota=item: self.change_route_status(rota, "CANCELADA"),
                     ),
                 ]
                 rows.append(ft.ListTile(
@@ -624,12 +663,16 @@ class DeliveryApp:
             ft.Text(f'Motorista: {route.get("motorista_id") or "-"}'),
             ft.Text(f'Organização: {route.get("organizacao_id")}'),
             ft.Text(f'Entregas: {len(route.get("entregas") or [])}'),
+            ft.Text(f'Data planejada: {route.get("data_planejada") or "-"}'),
         ], tight=True)
         dialog = ft.AlertDialog(
             title=ft.Text(f'Rota #{route["id"]}'),
             content=content,
             actions=[
                 ft.TextButton("Fechar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.FilledButton("Iniciar", visible=self.user["perfil"] != "MOTORISTA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "EM_EXECUCAO"))),
+                ft.FilledButton("Concluir", visible=self.user["perfil"] != "MOTORISTA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "FINALIZADA"))),
+                ft.FilledButton("Cancelar", visible=self.user["perfil"] != "MOTORISTA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "CANCELADA"))),
                 ft.FilledButton("Mostrar no mapa", on_click=lambda _: (self.close_dialog(dialog), self.show_route_on_map(route)))
             ],
         )
@@ -739,11 +782,9 @@ class DeliveryApp:
         status_field = ft.Dropdown(
             label="Status",
             value="PLANEJADA",
-            options=[self.option(value) for value in [
-                "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO",
-                "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
-            ]],
+            options=[self.option(value) for value in self.route_status_options()],
         )
+        planned_date = ft.TextField(label="Data planejada", hint_text="2026-08-07T10:30:00")
         delivery = ft.Dropdown(
             label="Entrega",
             value=None,
@@ -752,7 +793,7 @@ class DeliveryApp:
         )
 
         def save(_):
-            self.clear_errors(name, delivery, organization if organization.visible else ft.Row())
+            self.clear_errors(name, description, planned_date, delivery, organization if organization.visible else ft.Row(), vehicle, driver, status_field)
             errors = []
             valid = self.require_text(name, "Informe o nome da rota.", 2)
             if not valid:
@@ -765,6 +806,13 @@ class DeliveryApp:
                 self.set_error(delivery, "Selecione uma entrega.")
                 errors.append("Entrega: selecione uma entrega.")
                 valid = False
+            if planned_date.value.strip():
+                try:
+                    datetime.fromisoformat(planned_date.value.strip())
+                except ValueError:
+                    self.set_error(planned_date, "Informe a data no formato ISO 8601.")
+                    errors.append("Data: use o formato ISO 8601 (ex.: 2026-08-07T10:30:00).")
+                    valid = False
             if not valid:
                 self.page.update()
                 self.notify("; ".join(errors), True)
@@ -777,6 +825,8 @@ class DeliveryApp:
                 "motorista_id": int(driver.value) if driver.value else None,
                 "entregas": [{"entrega_id": int(delivery.value), "ordem_visita": 1}],
             }
+            if planned_date.value.strip():
+                payload["data_planejada"] = datetime.fromisoformat(planned_date.value.strip()).isoformat()
             if self.user["perfil"] == "ADMIN":
                 if organization.value:
                     payload["organizacao_id"] = int(organization.value)
@@ -788,7 +838,6 @@ class DeliveryApp:
                 self.notify("Rota criada com sucesso.")
                 self.routes_view()
             except ApiError as exc:
-                # mantém o diálogo aberto e fornece feedback inline
                 error_message.value = str(exc)
                 self.page.update()
                 return
@@ -797,8 +846,8 @@ class DeliveryApp:
         dialog = ft.AlertDialog(
             title=ft.Text("Nova Rota"),
             content=ft.Column([
-                error_message, name, description, organization, vehicle, driver, status_field, delivery,
-            ], tight=True, width=500, height=420, scroll=ft.ScrollMode.AUTO),
+                error_message, name, description, planned_date, organization, vehicle, driver, status_field, delivery,
+            ], tight=True, width=500, height=470, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
