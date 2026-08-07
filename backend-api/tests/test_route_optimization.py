@@ -96,11 +96,30 @@ def test_optimize_route_persists_result_and_sequence(client: TestClient, admin_h
 
 def test_optimize_route_rejects_finalized_route(client: TestClient, admin_headers: dict) -> None:
     route = _create_route_with_delivery(client, admin_headers)
-    client.patch(
-        f"/api/rotas/{route['id']}/status",
-        headers=admin_headers,
-        json={"status": "FINALIZADA", "evento": "FINALIZADA", "observacao": "concluída"},
-    )
+
+    with SessionLocal() as db:
+        persisted = db.get(Rota, route["id"])
+        assert persisted is not None
+        persisted.status = "FINALIZADA"
+        db.commit()
 
     response = client.post(f"/api/rotas/{route['id']}/otimizar", headers=admin_headers)
     assert response.status_code == 422
+
+
+def test_optimize_route_requires_coordinates(client: TestClient, admin_headers: dict) -> None:
+    response = client.post(
+        "/api/rotas",
+        headers=admin_headers,
+        json={
+            "nome": "Rota sem coordenadas",
+            "descricao": "Deve falhar",
+            "organizacao_id": 1,
+            "status": "PLANEJADA",
+            "entregas": [{"entrega_id": 1, "ordem_visita": 1}],
+        },
+    )
+    assert response.status_code == 201
+
+    optimize = client.post(f"/api/rotas/{response.json()['id']}/otimizar", headers=admin_headers)
+    assert optimize.status_code == 422
