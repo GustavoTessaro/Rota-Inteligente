@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover - optional dependency during import
 
 from .api_client import ApiClient, ApiError
 from .config import build_tracking_ws_url
-from .dashboard_utils import DASHBOARD_INDICATORS, get_dashboard_indicator_values
+from .dashboard_utils import DASHBOARD_INDICATORS, DashboardRefreshController, get_dashboard_indicator_values
 from .map_view import MapView
 from .tracking_client import build_marker, update_vehicle_state
 
@@ -41,6 +41,7 @@ class DeliveryApp:
         self.connection_indicator = None
         self.dashboard_data = {}
         self.dashboard_active = False
+        self.dashboard_refresh_controller = DashboardRefreshController(callback=self._refresh_dashboard, interval=5.0)
         self.content = ft.Column(
             expand=True,
             scroll=ft.ScrollMode.AUTO,
@@ -66,13 +67,9 @@ class DeliveryApp:
             pass
 
     def _start_dashboard_refresh_loop(self):
-        def runner():
-            while self.user is not None and getattr(self, "dashboard_active", False):
-                self._refresh_dashboard()
-                time.sleep(5)
-
-        thread = threading.Thread(target=runner, daemon=True)
-        thread.start()
+        if not getattr(self, "dashboard_active", False):
+            return
+        self.dashboard_refresh_controller.start()
 
     def _set_connection_state(self, state: str):
         self.websocket_state = state
@@ -302,6 +299,7 @@ class DeliveryApp:
         self.api.token = None
         self.user = None
         self.dashboard_active = False
+        self.dashboard_refresh_controller.stop()
         self._disconnect_tracking_socket()
         self.page.appbar = None
         self.show_login()
