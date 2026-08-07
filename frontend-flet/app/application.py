@@ -659,7 +659,7 @@ class DeliveryApp:
             title=ft.Text("Nova Rota"),
             content=ft.Column([
                 error_message, name, description, organization, vehicle, driver, status_field, delivery,
-            ], tight=True, width=500),
+            ], tight=True, width=500, height=420, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -826,18 +826,13 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar veículo" if vehicle else "Novo veículo"),
-            content=ft.Container(
-                ft.Column([
-                    error_message,
-                    license_plate, model, brand, year, color,
-                    capacity_weight, capacity_volume, type_field, status_field, mileage,
-                    driver, organization if self.user["perfil"] == "ADMIN" else ft.Row(),
-                    active,
-                ], tight=True),
-                width=440,
-                height=420,
-                scroll=ft.ScrollMode.AUTO,
-            ),
+            content=ft.Column([
+                error_message,
+                license_plate, model, brand, year, color,
+                capacity_weight, capacity_volume, type_field, status_field, mileage,
+                driver, organization if self.user["perfil"] == "ADMIN" else ft.Row(),
+                active,
+            ], tight=True, width=440, height=420, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -983,7 +978,7 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar entrega" if delivery else "Nova entrega"),
-            content=ft.Column([error_message, order, driver, origin, destination, due, notes], tight=True, width=460),
+            content=ft.Column([error_message, order, driver, origin, destination, due, notes], tight=True, width=460, height=420, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1049,7 +1044,7 @@ class DeliveryApp:
         actions.append(ft.FilledButton("Salvar", on_click=save))
         dialog = ft.AlertDialog(
             title=ft.Text("Editar comprovante" if receipt else "Comprovante de entrega"),
-            content=ft.Column([error_message, name, document, note], tight=True, width=360),
+            content=ft.Column([error_message, name, document, note], tight=True, width=360, height=360, scroll=ft.ScrollMode.AUTO),
             actions=actions,
         )
         self.open_dialog(dialog)
@@ -1466,7 +1461,7 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar organização" if organization else "Nova organização"),
-            content=ft.Column([error_message, name, cnpj, email, phone, address, active], tight=True, width=420),
+            content=ft.Column([error_message, name, cnpj, email, phone, address, active], tight=True, width=420, height=420, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1561,7 +1556,7 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar cliente" if client else "Novo cliente"),
-            content=ft.Column([error_message, name, document, email, phone, notes], tight=True, width=360),
+            content=ft.Column([error_message, name, document, email, phone, notes], tight=True, width=360, height=420, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1674,7 +1669,7 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar endereço" if address else "Novo endereço"),
-            content=ft.Column([error_message, street, number, complement, district, city, state, zip_code, kind], tight=True, width=420),
+            content=ft.Column([error_message, street, number, complement, district, city, state, zip_code, kind], tight=True, width=420, height=460, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -1839,7 +1834,7 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar produto" if product else "Novo produto"),
-            content=ft.Column([error_message, name, description, weight, volume, declared], tight=True, width=380),
+            content=ft.Column([error_message, name, description, weight, volume, declared], tight=True, width=380, height=420, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -2025,7 +2020,7 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar usuário" if user else "Novo usuário"),
-            content=ft.Column([error_message, name, email, password, phone, profile, organization], tight=True, width=380),
+            content=ft.Column([error_message, name, email, password, phone, profile, organization], tight=True, width=380, height=420, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -2441,7 +2436,7 @@ class DeliveryApp:
                 priority,
                 payment,
                 notes,
-            ], tight=True, width=520),
+            ], tight=True, width=520, height=520, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
