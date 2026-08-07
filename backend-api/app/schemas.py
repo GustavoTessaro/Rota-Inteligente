@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -303,6 +304,16 @@ class RotaPosicaoOut(ORMModel):
     provider: str | None = None
     motorista_id: int | None = None
     veiculo_id: int | None = None
+
+
+class RotaOptimizationOut(BaseModel):
+    optimized_order: list[int]
+    ordered_waypoints: list[dict[str, Any]] | None = None
+    distance_meters: int | None = None
+    duration_seconds: int | None = None
+    encoded_polyline: str | None = None
+    google_route_id: str | None = None
+    google_optimization_request_id: str | None = None
 
 
 class RotaOut(ORMModel):

@@ -1,4 +1,6 @@
 from datetime import datetime
+from decimal import Decimal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
@@ -18,6 +20,7 @@ from ..deps import (
 )
 from ..models import (
     Endereco,
+    Entrega,
     Perfil,
     Produto,
     Rota,
@@ -31,6 +34,7 @@ from ..models import (
 from ..schemas import (
     RotaCreate,
     RotaHistoricoOut,
+    RotaOptimizationOut,
     RotaOut,
     RotaPosicaoCreate,
     RotaPosicaoOut,
@@ -38,9 +42,26 @@ from ..schemas import (
     StatusRota,
 )
 from ..security import current_user
+from ..services.google_maps_service import GoogleMapsService
 from ..tracking import manager
 
 router = APIRouter(prefix="/rotas")
+
+
+class RouteOptimizationService:
+    def __init__(self, service: GoogleMapsService | None = None):
+        self.service = service or GoogleMapsService()
+
+    def optimize_route(
+        self,
+        origin: dict[str, float] | None,
+        destination: dict[str, float] | None,
+        waypoints: list[dict[str, Any]],
+        vehicle_constraints: dict[str, Any] | None = None,
+        time_windows: list[dict[str, Any]] | None = None,
+        vehicle_count: int = 1,
+    ) -> dict[str, Any]:
+        return self.service.optimize_route(origin, destination, waypoints, vehicle_constraints, time_windows, vehicle_count=vehicle_count)
 
 
 @router.get("", response_model=list[RotaOut])
@@ -195,6 +216,84 @@ def update_route_status(
         ))
     commit(db)
     return rota
+
+
+@router.post("/{rota_id}/otimizar", response_model=RotaOptimizationOut)
+def optimize_route_endpoint(
+    rota_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(current_user),
+):
+    rota = get_or_404(db, Rota, rota_id)
+    ensure_route_access_scope(user, rota)
+
+    if rota.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA}:
+        raise HTTPException(422, "Não é possível otimizar uma rota finalizada ou cancelada")
+    if not rota.entregas:
+        raise HTTPException(422, "Rota precisa de entregas para otimização")
+
+    origin = None
+    destination = None
+    waypoints: list[dict[str, Any]] = []
+
+    if rota.origem_endereco and rota.origem_endereco.latitude is not None and rota.origem_endereco.longitude is not None:
+        origin = {"lat": float(rota.origem_endereco.latitude), "lng": float(rota.origem_endereco.longitude)}
+    if rota.destino_endereco and rota.destino_endereco.latitude is not None and rota.destino_endereco.longitude is not None:
+        destination = {"lat": float(rota.destino_endereco.latitude), "lng": float(rota.destino_endereco.longitude)}
+
+    for entry in sorted(rota.entregas, key=lambda item: item.ordem_visita or 0):
+        delivery = db.get(Entrega, entry.entrega_id)
+        if delivery is None:
+            raise HTTPException(422, f"Entrega {entry.entrega_id} não encontrada")
+        if delivery.endereco_destino_id is not None:
+            address = db.get(Endereco, delivery.endereco_destino_id)
+            if address and address.latitude is not None and address.longitude is not None:
+                waypoints.append({
+                    "lat": float(address.latitude),
+                    "lng": float(address.longitude),
+                    "label": f"Entrega {delivery.id}",
+                })
+
+    if not waypoints:
+        raise HTTPException(422, "Nenhuma coordenada disponível para otimização")
+    if origin is None and rota.origem_endereco_id is None and rota.entregas:
+        origin = waypoints[0]
+    if destination is None and rota.destino_endereco_id is None and rota.entregas:
+        destination = waypoints[-1]
+
+    optimization = RouteOptimizationService().optimize_route(origin, destination, waypoints)
+    optimized_order = optimization.get("optimized_order") or list(range(len(waypoints)))
+    ordered_waypoints = optimization.get("ordered_waypoints") or [waypoints[index] for index in optimized_order]
+
+    ordered_entries = sorted(rota.entregas, key=lambda item: item.ordem_visita or 0)
+    if len(ordered_entries) == len(optimized_order):
+        for position, entry in enumerate(ordered_entries):
+            if position in optimized_order:
+                entry.sequencia_otimizada = optimized_order.index(position) + 1
+            else:
+                entry.sequencia_otimizada = None
+
+    if optimization.get("distance_meters") is not None:
+        rota.distancia_prevista = Decimal(str(optimization["distance_meters"] / 1000))
+    if optimization.get("duration_seconds") is not None:
+        rota.duracao_prevista = Decimal(str(optimization["duration_seconds"] / 60))
+    if optimization.get("google_route_id"):
+        rota.google_route_id = optimization["google_route_id"]
+    if optimization.get("google_optimization_request_id"):
+        rota.google_optimization_request_id = optimization["google_optimization_request_id"]
+    if optimization.get("encoded_polyline"):
+        rota.route_geometry = optimization["encoded_polyline"]
+
+    commit(db)
+    return {
+        "optimized_order": optimized_order,
+        "ordered_waypoints": ordered_waypoints,
+        "distance_meters": optimization.get("distance_meters"),
+        "duration_seconds": optimization.get("duration_seconds"),
+        "encoded_polyline": optimization.get("encoded_polyline"),
+        "google_route_id": rota.google_route_id,
+        "google_optimization_request_id": rota.google_optimization_request_id,
+    }
 
 
 @router.post("/{rota_id}/posicoes", response_model=RotaPosicaoOut, status_code=201)

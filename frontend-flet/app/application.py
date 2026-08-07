@@ -679,63 +679,86 @@ class DeliveryApp:
         self.open_dialog(dialog)
 
     def show_route_on_map(self, route):
-        # Build origin/destination/waypoints from route entregas
-        entregas = route.get("entregas") or []
-        coords = []
-        for e in entregas:
-            endereco = e.get("endereco") or {}
-            lat = endereco.get("latitude")
-            lng = endereco.get("longitude")
-            if lat and lng:
-                coords.append({"lat": lat, "lng": lng})
-        if len(coords) < 2:
-            self.notify("Rota precisa de pelo menos 2 pontos com coordenadas para exibir.", True)
-            return
-        origin = coords[0]
-        destination = coords[-1]
-        waypoints = coords[1:-1] or None
-        payload = {"origin": origin, "destination": destination, "waypoints": waypoints}
-        # prefer optimization endpoint; fallback to directions
-        encoded = None
-        try:
-            opt = self.api.request("POST", "/maps/optimize", json=payload)
-            if opt:
-                encoded = opt.get("encoded_polyline")
-                # if optimization returned an ordered_waypoints, update markers
-                ordered = opt.get("ordered_waypoints")
-                if ordered:
-                    # replace payload waypoints with ordered sequence (exclude origin/dest)
-                    payload = {"origin": origin, "destination": destination, "waypoints": ordered}
-        except ApiError:
-            opt = None
-
-        if not encoded:
-            try:
-                res = self.api.request("POST", "/maps/directions", json=payload)
-            except ApiError as exc:
-                self.notify(str(exc), True)
-                return
-
-            encoded = res.get("encoded_polyline") or (res.get("raw", {}).get("routes", [{}])[0].get("overview_polyline", {}).get("points") if res.get("raw") else None)
-        if not encoded:
-            self.notify("Não foi possível obter polyline da rota.", True)
-            return
-
-        # ensure map control exists
         if not getattr(self, 'map_control', None):
             self.map_control = MapView(markers=[], height=400).build()
-            # insert map into UI
             self.content.controls.append(ft.Container(self.map_control, padding=10))
 
         web = self.map_control
-        # draw the polyline
+        ordered_waypoints = []
+        encoded = None
+
         try:
-            web.draw_polyline(encoded)
-        except Exception:
+            if route.get("id") is not None:
+                opt = self.api.request("POST", f"/rotas/{route['id']}/otimizar")
+                if opt:
+                    encoded = opt.get("encoded_polyline")
+                    ordered_waypoints = opt.get("ordered_waypoints") or []
+            if not encoded and not ordered_waypoints:
+                # Build origin/destination/waypoints from route entregas as fallback
+                entregas = route.get("entregas") or []
+                coords = []
+                for e in entregas:
+                    endereco = e.get("endereco") or {}
+                    lat = endereco.get("latitude")
+                    lng = endereco.get("longitude")
+                    if lat and lng:
+                        coords.append({"lat": lat, "lng": lng})
+                if len(coords) < 2:
+                    self.notify("Rota precisa de pelo menos 2 pontos com coordenadas para exibir.", True)
+                    return
+                origin = coords[0]
+                destination = coords[-1]
+                waypoints = coords[1:-1] or None
+                payload = {"origin": origin, "destination": destination, "waypoints": waypoints}
+                try:
+                    opt = self.api.request("POST", "/maps/optimize", json=payload)
+                    if opt:
+                        encoded = opt.get("encoded_polyline")
+                        ordered = opt.get("ordered_waypoints") or []
+                        if ordered:
+                            ordered_waypoints = ordered
+                except ApiError:
+                    opt = None
+
+                if not encoded:
+                    try:
+                        res = self.api.request("POST", "/maps/directions", json=payload)
+                    except ApiError as exc:
+                        self.notify(str(exc), True)
+                        return
+                    encoded = res.get("encoded_polyline") or (res.get("raw", {}).get("routes", [{}])[0].get("overview_polyline", {}).get("points") if res.get("raw") else None)
+        except ApiError as exc:
+            self.notify(str(exc), True)
+            return
+
+        if not encoded and not ordered_waypoints:
+            self.notify("Não foi possível obter a rota otimizada.", True)
+            return
+
+        markers = []
+        for point in ordered_waypoints or []:
+            lat = point.get("lat") or point.get("latitude")
+            lng = point.get("lng") or point.get("longitude")
+            if lat is not None and lng is not None:
+                markers.append({"lat": lat, "lng": lng, "title": point.get("label") or "Parada"})
+        if markers:
             try:
-                web.eval_js(f"window.postMessage({json.dumps({'action':'polyline','encoded':encoded})}, '*');")
+                web.set_markers(markers)
             except Exception:
-                pass
+                try:
+                    web.eval_js(f"window.postMessage({json.dumps({'action': 'clear'})}, '*');")
+                    web.eval_js(f"window.postMessage({json.dumps({'action': 'markers', 'markers': markers})}, '*');")
+                except Exception:
+                    pass
+
+        if encoded:
+            try:
+                web.draw_polyline(encoded)
+            except Exception:
+                try:
+                    web.eval_js(f"window.postMessage({json.dumps({'action':'polyline','encoded':encoded})}, '*');")
+                except Exception:
+                    pass
         self.page.update()
 
     def create_route_dialog(self):
