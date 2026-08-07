@@ -1,5 +1,7 @@
 import json
+import types
 
+from app.services import google_route_optimization_service as service_module
 from app.services.google_route_optimization_service import GoogleRouteOptimizationService
 
 
@@ -15,10 +17,22 @@ def test_optimize_raises_without_endpoint(monkeypatch, tmp_path):
     }
     sa_file = tmp_path / "sa.json"
     sa_file.write_text(json.dumps(sa))
+
+    monkeypatch.setattr(
+        service_module,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            google_route_optimization_service_account_file=None,
+            google_route_optimization_endpoint=None,
+            google_route_optimization_scope="https://www.googleapis.com/auth/cloud-platform",
+            google_maps_api_key=None,
+        ),
+    )
+
     svc = GoogleRouteOptimizationService(service_account_file=str(sa_file), endpoint=None)
     try:
         svc.optimize_route({"lat": 0, "lng": 0}, {"lat": 1, "lng": 1}, [{"lat":0.1, "lng":0.1}])
-        assert False, "Expected RuntimeError when endpoint not configured"
+        assert False, "Expected RuntimeError when no API key is configured"
     except RuntimeError:
         pass
 

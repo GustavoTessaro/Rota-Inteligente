@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,7 +26,10 @@ class Settings(BaseSettings):
     # OAuth scope for routes optimization
     google_route_optimization_scope: str = "https://www.googleapis.com/auth/cloud-platform"
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parent.parent / ".env",
+        extra="ignore",
+    )
 
     @property
     def cors_origin_list(self) -> list[str]:

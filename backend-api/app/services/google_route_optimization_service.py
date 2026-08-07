@@ -1,7 +1,10 @@
+from itertools import permutations
+import os
+import re
 from typing import Any, Dict, List, Optional
 import time
 import httpx
-from ..config import settings
+from ..config import get_settings
 
 # prefer google-auth for service account credentials
 try:
@@ -13,17 +16,21 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 class GoogleRouteOptimizationService:
-    """Implementation wrapper for Google Route Optimization API.
+    """Implementation wrapper for Google route optimization.
 
-    This class attempts to use a service account to obtain an OAuth2 access
-    token and call the configured optimization endpoint. If no endpoint or
-    credentials are configured, callers should fallback to the stub.
+    The service first tries a configured custom endpoint when present. If no
+    custom endpoint is configured, it uses the official Google Routes API via
+    the existing Maps API key so the current route flow can run end-to-end.
     """
 
+    OFFICIAL_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+
     def __init__(self, service_account_file: Optional[str] = None, endpoint: Optional[str] = None):
+        settings = get_settings()
         self.sa_file = service_account_file or settings.google_route_optimization_service_account_file
         self.endpoint = endpoint or settings.google_route_optimization_endpoint
         self.scope = settings.google_route_optimization_scope
+        self.api_key = settings.google_maps_api_key or os.getenv("GOOGLE_MAPS_API_KEY")
         self._token = None
         self._token_exp = 0
 
@@ -54,6 +61,45 @@ class GoogleRouteOptimizationService:
         # Fallback: no google-auth available
         return None
 
+    def _parse_duration_seconds(self, value: Any) -> int | None:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            match = re.search(r"(\d+)", value)
+            if match:
+                return int(match.group(1))
+        if isinstance(value, dict):
+            seconds = value.get("seconds")
+            if seconds is not None:
+                return int(seconds)
+        return None
+
+    def _compute_routes_response(self, origin: Optional[Dict[str, float]], destination: Optional[Dict[str, float]], waypoints: List[Dict[str, float]]) -> Dict[str, Any]:
+        if not self.api_key:
+            raise RuntimeError("Google Maps API key not configured")
+
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline",
+        }
+        body = {
+            "origin": {"location": {"latLng": {"latitude": origin["lat"], "longitude": origin["lng"]}}},
+            "destination": {"location": {"latLng": {"latitude": destination["lat"], "longitude": destination["lng"]}}},
+            "travelMode": "DRIVE",
+            "routingPreference": "TRAFFIC_AWARE",
+        }
+        if waypoints:
+            body["intermediates"] = [
+                {"location": {"latLng": {"latitude": point["lat"], "longitude": point["lng"]}}}
+                for point in waypoints
+            ]
+
+        response = httpx.post(self.OFFICIAL_ROUTES_URL, params={"key": self.api_key}, json=body, headers=headers, timeout=20)
+        response.raise_for_status()
+        return response.json()
+
     def optimize_route(self,
                        origin: Optional[Dict[str, float]],
                        destination: Optional[Dict[str, float]],
@@ -62,30 +108,70 @@ class GoogleRouteOptimizationService:
                        time_windows: Optional[List[Dict[str, Any]]] = None,
                        vehicle_count: int = 1,
                        ) -> Dict[str, Any]:
-        """
-        Call the real Route Optimization API. This method requires
-        `google_route_optimization_endpoint` to be configured. The caller
-        should handle fallback when the result is None or raises.
-        """
-        if not self.endpoint:
-            raise RuntimeError("Route Optimization endpoint not configured")
+        """Try a configured custom endpoint first; otherwise use the official Routes API."""
+        if self.endpoint:
+            token = self._get_access_token()
+            headers = {"Content-Type": "application/json"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
 
-        token = self._get_access_token()
-        headers = {"Content-Type": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+            body = {
+                "origin": origin,
+                "destination": destination,
+                "waypoints": waypoints,
+                "vehicle_constraints": vehicle_constraints,
+                "time_windows": time_windows,
+                "vehicle_count": vehicle_count,
+            }
+            try:
+                response = httpx.post(self.endpoint, json=body, headers=headers, timeout=20)
+                response.raise_for_status()
+                return response.json()
+            except Exception:
+                pass
 
-        body = {
-            "origin": origin,
-            "destination": destination,
-            "waypoints": waypoints,
-            "vehicle_constraints": vehicle_constraints,
-            "time_windows": time_windows,
-            "vehicle_count": vehicle_count,
-        }
-        try:
-            r = httpx.post(self.endpoint, json=body, headers=headers, timeout=20)
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            raise
+        if not origin or not destination:
+            raise RuntimeError("Origin and destination must be provided for official route optimization")
+
+        if not waypoints:
+            return {
+                "optimized_order": [],
+                "ordered_waypoints": [],
+                "distance_meters": 0,
+                "duration_seconds": 0,
+                "encoded_polyline": None,
+            }
+
+        if len(waypoints) <= 3:
+            orders = list(permutations(range(len(waypoints))))
+        else:
+            orders = [tuple(range(len(waypoints)))]
+
+        best_result: Dict[str, Any] | None = None
+        best_order: tuple[int, ...] | None = None
+        for order in orders:
+            ordered_points = [waypoints[index] for index in order]
+            raw = self._compute_routes_response(origin, destination, ordered_points)
+            route = raw.get("routes", [{}])[0] if raw.get("routes") else {}
+            distance = route.get("distanceMeters")
+            duration = self._parse_duration_seconds(route.get("duration"))
+            polyline = None
+            poly = route.get("polyline") or {}
+            if isinstance(poly, dict):
+                polyline = poly.get("encodedPolyline") or poly.get("points")
+
+            score = int(distance or 0)
+            if best_result is None or score < int(best_result.get("distance_meters") or 0):
+                best_result = {
+                    "optimized_order": list(order),
+                    "ordered_waypoints": ordered_points,
+                    "distance_meters": int(distance) if distance is not None else None,
+                    "duration_seconds": duration,
+                    "encoded_polyline": polyline,
+                    "raw": raw,
+                }
+                best_order = order
+
+        if best_result is None:
+            raise RuntimeError("Optimized route could not be computed")
+        return best_result
