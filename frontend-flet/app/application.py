@@ -558,6 +558,151 @@ class DeliveryApp:
             "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
         ]
 
+    def _sorted_route_entries(self, route):
+        entries = list(route.get("entregas") or [])
+        return sorted(entries, key=lambda item: (
+            int(item.get("sequencia_otimizada") or item.get("ordem_visita") or 0),
+            int(item.get("entrega_id") or item.get("id") or 0),
+        ))
+
+    def _driver_route_snapshot(self, route):
+        snapshot = []
+        for entry in self._sorted_route_entries(route):
+            delivery_id = entry.get("entrega_id")
+            if delivery_id is None:
+                continue
+            try:
+                delivery = self.api.request("GET", f"/entregas/{delivery_id}")
+                pedido = self.api.request("GET", f"/pedidos/{delivery['pedido_id']}")
+                cliente = self.api.request("GET", f"/clientes/{pedido['cliente_id']}")
+                addresses = self.api.request("GET", f"/clientes/{pedido['cliente_id']}/enderecos")
+                address = next((item for item in addresses if item["id"] == delivery["endereco_destino_id"]), None)
+                snapshot.append({
+                    "entry": entry,
+                    "delivery": delivery,
+                    "cliente": cliente,
+                    "address": address,
+                    "order": int(entry.get("sequencia_otimizada") or entry.get("ordem_visita") or 0),
+                })
+            except ApiError:
+                continue
+        return snapshot
+
+    def _next_driver_stop(self, route):
+        for stop in self._driver_route_snapshot(route):
+            if stop["delivery"]["status"] not in {"ENTREGUE", "CANCELADA"}:
+                return stop
+        return None
+
+    def _driver_route_panel(self, route):
+        route_progress = int(route.get("progresso_percentual") or 0)
+        next_stop = self._next_driver_stop(route)
+        stops = self._driver_route_snapshot(route)
+        has_pending = any(stop["delivery"]["status"] not in {"ENTREGUE", "CANCELADA"} for stop in stops)
+        next_stop_text = "-"
+        next_stop_address = "-"
+        if next_stop:
+            next_stop_text = f"{next_stop['cliente'].get('nome')}"
+            next_stop_address = next_stop['address']['logradouro'] if next_stop['address'] else "Endereço não informado"
+            if next_stop['address']:
+                next_stop_address = (
+                    f"{next_stop['address'].get('logradouro', '')}, {next_stop['address'].get('numero', '')} - "
+                    f"{next_stop['address'].get('bairro', '')}, {next_stop['address'].get('cidade', '')}"
+                ).strip(', ')
+
+        def start_execution(_):
+            self.change_route_status(route, "EM_EXECUCAO", event="PARTIDA", observation="Execução iniciada pelo motorista", progress=max(route_progress, 5))
+
+        def pause_execution(_):
+            self.change_route_status(route, "PAUSADA", event="PAUSA", observation="Rota pausada pelo motorista", progress=route_progress)
+
+        def resume_execution(_):
+            self.change_route_status(route, "EM_EXECUCAO", event="RETOMADA", observation="Rota retomada pelo motorista", progress=route_progress)
+
+        def finish_current_delivery(_):
+            if not next_stop:
+                self.notify("Nenhuma entrega pendente para concluir.", True)
+                return
+            delivery_id = next_stop["delivery"]["id"]
+            try:
+                self.api.request(
+                    "POST",
+                    f"/entregas/{delivery_id}/comprovante",
+                    json={
+                        "nome_recebedor": next_stop["cliente"].get("nome", "Recebedor"),
+                        "documento_recebedor": f"DOC-{delivery_id}",
+                        "observacao": "Entrega confirmada na execução da rota",
+                    },
+                )
+                self.api.request(
+                    "PATCH",
+                    f"/entregas/{delivery_id}/status",
+                    json={"status": "ENTREGUE", "observacao": "Entrega concluída pela execução da rota"},
+                )
+                completed = sum(1 for stop in stops if stop["delivery"]["status"] == "ENTREGUE") + 1
+                total = len(stops) or 1
+                new_progress = min(100, int((completed / total) * 100))
+                if completed >= total:
+                    self.change_route_status(route, "FINALIZADA", progress=100, event="FINALIZADA", observation="Todas as entregas concluídas")
+                else:
+                    self.change_route_status(route, "EM_EXECUCAO", progress=new_progress, event="ENTREGA_REALIZADA", observation=f"Entrega {delivery_id} concluída")
+                self.notify("Entrega concluída e rota atualizada.")
+            except ApiError as exc:
+                self.notify(str(exc), True)
+
+        action_buttons = []
+        if self.user["perfil"] == "MOTORISTA":
+            if route.get("status") in {"PLANEJADA", "PRONTA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO"}:
+                action_buttons.append(ft.FilledButton("Iniciar execução", icon=ft.Icons.PLAY_ARROW, on_click=start_execution))
+            elif route.get("status") == "EM_EXECUCAO":
+                action_buttons.append(ft.FilledButton("Pausar rota", icon=ft.Icons.PAUSE, on_click=pause_execution))
+            elif route.get("status") == "PAUSADA":
+                action_buttons.append(ft.FilledButton("Retomar rota", icon=ft.Icons.PLAY_ARROW, on_click=resume_execution))
+            if has_pending:
+                action_buttons.append(ft.FilledButton("Concluir entrega atual", icon=ft.Icons.DONE, on_click=finish_current_delivery))
+            if not has_pending and route.get("status") not in {"FINALIZADA", "CANCELADA"}:
+                action_buttons.append(ft.FilledButton("Finalizar rota", icon=ft.Icons.FLAG, on_click=lambda _: self.change_route_status(route, "FINALIZADA", progress=100, event="FINALIZADA", observation="Rota finalizada pelo motorista")))
+
+        stop_rows = []
+        for stop in stops:
+            delivery = stop["delivery"]
+            stop_rows.append(
+                ft.ListTile(
+                    leading=ft.Icon(ft.Icons.LOCATION_ON, color=ft.Colors.INDIGO if delivery["status"] != "ENTREGUE" else ft.Colors.GREEN),
+                    title=ft.Text(f"{stop['order']}. {stop['cliente'].get('nome')}") ,
+                    subtitle=ft.Text(f"{stop['address'] and (stop['address'].get('logradouro') or '') or 'Endereço não informado'} · {delivery['status'].replace('_', ' ').title()}"),
+                    trailing=ft.Text(f"#{delivery['id']}"),
+                )
+            )
+
+        return ft.Container(
+            content=ft.Column([
+                ft.Text(f"Rota: {route['nome']}", size=22, weight=ft.FontWeight.BOLD),
+                ft.Row([
+                    ft.Text(f"Veículo: {route.get('veiculo_id') or '-'}"),
+                    ft.Text(f"Status: {route['status'].replace('_', ' ')}"),
+                ], wrap=True),
+                ft.Row([
+                    ft.Text(f"Progresso: {route_progress}%"),
+                    ft.Text(f"Entregas: {len(stops)}"),
+                ], wrap=True),
+                ft.ProgressBar(value=min(max(route_progress / 100, 0), 1), bar_height=10),
+                ft.Divider(),
+                ft.Text("Próxima parada", weight=ft.FontWeight.BOLD),
+                ft.Text(next_stop_text),
+                ft.Text(f"Endereço: {next_stop_address}", color=ft.Colors.GREY_700),
+                ft.Divider(),
+                ft.Row(action_buttons, wrap=True),
+                ft.Divider(),
+                ft.Text("Entregas da rota", weight=ft.FontWeight.BOLD),
+                *stop_rows,
+            ], tight=True, spacing=10),
+            padding=20,
+            border_radius=16,
+            bgcolor=ft.Colors.WHITE,
+            shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+        )
+
     def change_route_status(self, route, new_status, progress=None, event=None, observation=None):
         try:
             payload = {"status": new_status}
@@ -590,59 +735,63 @@ class DeliveryApp:
                 options=[self.option(value) for value in self.route_status_options()],
             )
             rows = []
-            for item in routes:
-                status = item["status"]
-                actions = [
-                    ft.IconButton(
-                        ft.Icons.INFO,
-                        tooltip="Detalhes da rota",
-                        on_click=lambda _, rota=item: self.route_details_dialog(rota),
-                    ),
-                    ft.IconButton(
-                        ft.Icons.PLAY_ARROW,
-                        tooltip="Iniciar rota",
-                        visible=self.user["perfil"] != "MOTORISTA",
-                        disabled=status in {"EM_EXECUCAO", "FINALIZADA", "CANCELADA"},
-                        on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO"),
-                    ),
-                    ft.IconButton(
-                        ft.Icons.PAUSE,
-                        tooltip="Pausar rota",
-                        visible=self.user["perfil"] != "MOTORISTA",
-                        disabled=status != "EM_EXECUCAO",
-                        on_click=lambda _, rota=item: self.change_route_status(rota, "PAUSADA", event="PAUSA", observation="Pausada pela interface"),
-                    ),
-                    ft.IconButton(
-                        ft.Icons.PLAY_ARROW,
-                        tooltip="Retomar rota",
-                        visible=self.user["perfil"] != "MOTORISTA",
-                        disabled=status != "PAUSADA",
-                        on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO", event="RETOMADA", observation="Retomada pela interface"),
-                    ),
-                    ft.IconButton(
-                        ft.Icons.DONE,
-                        tooltip="Concluir rota",
-                        visible=self.user["perfil"] != "MOTORISTA",
-                        disabled=status not in {"EM_EXECUCAO", "PAUSADA", "PRONTA"},
-                        on_click=lambda _, rota=item: self.change_route_status(rota, "FINALIZADA"),
-                    ),
-                    ft.IconButton(
-                        ft.Icons.CANCEL,
-                        tooltip="Cancelar rota",
-                        visible=self.user["perfil"] != "MOTORISTA",
-                        disabled=status in {"FINALIZADA", "CANCELADA"},
-                        on_click=lambda _, rota=item: self.change_route_status(rota, "CANCELADA"),
-                    ),
-                ]
-                rows.append(ft.ListTile(
-                    leading=ft.Icon(ft.Icons.TRIP_ORIGIN, color=ft.Colors.PURPLE),
-                    title=ft.Text(f'{item["nome"]} · {status.replace("_", " ")}'),
-                    subtitle=ft.Text(
-                        f'Veículo: {item["veiculo_id"] or "-"} · Motorista: {item["motorista_id"] or "-"} '
-                        f'· Entregas: {len(item.get("entregas") or [])} · Progresso: {item.get("progresso_percentual") or 0}%'
-                    ),
-                    trailing=ft.Row(actions, tight=True),
-                ))
+            if self.user["perfil"] == "MOTORISTA":
+                for item in routes:
+                    rows.append(self._driver_route_panel(item))
+            else:
+                for item in routes:
+                    status = item["status"]
+                    actions = [
+                        ft.IconButton(
+                            ft.Icons.INFO,
+                            tooltip="Detalhes da rota",
+                            on_click=lambda _, rota=item: self.route_details_dialog(rota),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.PLAY_ARROW,
+                            tooltip="Iniciar rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status in {"EM_EXECUCAO", "FINALIZADA", "CANCELADA"},
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO"),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.PAUSE,
+                            tooltip="Pausar rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status != "EM_EXECUCAO",
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "PAUSADA", event="PAUSA", observation="Pausada pela interface"),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.PLAY_ARROW,
+                            tooltip="Retomar rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status != "PAUSADA",
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO", event="RETOMADA", observation="Retomada pela interface"),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.DONE,
+                            tooltip="Concluir rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status not in {"EM_EXECUCAO", "PAUSADA", "PRONTA"},
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "FINALIZADA"),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.CANCEL,
+                            tooltip="Cancelar rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status in {"FINALIZADA", "CANCELADA"},
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "CANCELADA"),
+                        ),
+                    ]
+                    rows.append(ft.ListTile(
+                        leading=ft.Icon(ft.Icons.TRIP_ORIGIN, color=ft.Colors.PURPLE),
+                        title=ft.Text(f'{item["nome"]} · {status.replace("_", " ")}'),
+                        subtitle=ft.Text(
+                            f'Veículo: {item["veiculo_id"] or "-"} · Motorista: {item["motorista_id"] or "-"} '
+                            f'· Entregas: {len(item.get("entregas") or [])} · Progresso: {item.get("progresso_percentual") or 0}%'
+                        ),
+                        trailing=ft.Row(actions, tight=True),
+                    ))
             map_control = getattr(self, "map_control", None)
             self.content.controls = [
                 self.header_bar("Rotas", f"{len(routes)} rota(s)", [
