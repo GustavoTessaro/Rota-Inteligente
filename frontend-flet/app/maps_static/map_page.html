@@ -6,16 +6,44 @@
     <title>Mapa - Rota Inteligente</title>
     <style>
       html, body, #map { height: 100%; margin: 0; padding: 0; }
+      body {
+        font-family: Arial, sans-serif;
+        background: #f3f4f6;
+      }
+      .map-error {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        text-align: center;
+        color: #7f1d1d;
+        background: linear-gradient(135deg, #fee2e2, #fff7ed);
+        border: 1px solid #fca5a5;
+        box-sizing: border-box;
+      }
     </style>
     <script>
       // The Maps JS API script will be injected by the host when a key is available.
       // Host should postMessage { action: 'loadKey', key: 'RESTRICTED_KEY' } to load the script.
       function loadMapsScript(key) {
-        if (!key) return;
+        if (!key) {
+          const mapHost = document.getElementById('map');
+          if (mapHost) {
+            mapHost.innerHTML = '<div class="map-error">Google Maps não está configurado. Defina GOOGLE_MAPS_RESTRICTED_KEY ou GOOGLE_MAPS_API_KEY no arquivo .env do backend.</div>';
+          }
+          return;
+        }
         const s = document.createElement('script');
         s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places,geometry`;
         s.defer = true;
         s.onload = () => { if (window.init) window.init(); };
+        s.onerror = () => {
+          const mapHost = document.getElementById('map');
+          if (mapHost) {
+            mapHost.innerHTML = '<div class="map-error">Não foi possível carregar o Google Maps. Verifique a chave e as permissões da API no Google Cloud.</div>';
+          }
+        };
         document.head.appendChild(s);
       }
       window.INITIAL_MARKERS = window.INITIAL_MARKERS || [];

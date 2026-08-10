@@ -9,10 +9,11 @@ router = APIRouter(prefix="/api/maps")
 def maps_config():
     """Return public maps configuration (no secret keys)."""
     from .config import settings
-    # Only return the restricted key intended for browser use (if provided)
+    key = settings.google_maps_restricted_key or settings.google_maps_api_key
     return {
         "maps_default_center": settings.maps_default_center,
-        "google_maps_key": settings.google_maps_restricted_key or None,
+        "google_maps_key": key,
+        "google_maps_key_source": "restricted" if settings.google_maps_restricted_key else "primary",
     }
 
 
