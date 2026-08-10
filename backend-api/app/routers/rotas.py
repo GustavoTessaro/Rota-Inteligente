@@ -21,18 +21,22 @@ from ..deps import (
 from ..models import (
     Endereco,
     Entrega,
+    Organizacao,
+    Pedido,
     Perfil,
     Produto,
     Rota,
     RotaEntrega,
     RotaHistorico,
     RotaPosicao,
+    StatusEntrega,
     TipoEventoRota,
     Usuario,
     Veiculo,
 )
 from ..schemas import (
     RotaCreate,
+    RotaGerarIn,
     RotaHistoricoOut,
     RotaOptimizationOut,
     RotaOut,
@@ -150,6 +154,81 @@ def create_route(data: RotaCreate, db: Session = Depends(get_db), user: Usuario 
     validate_route_delivery_entries(db, data)
     rota = Rota(**data.model_dump(exclude={"entregas"}))
     rota.entregas = [RotaEntrega(**entry.model_dump()) for entry in data.entregas]
+    db.add(rota)
+    commit(db)
+    return rota
+
+
+@router.post("/gerar", response_model=RotaOut, status_code=201)
+def generate_route_from_orders(data: RotaGerarIn, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
+    ensure_route_payload_scope(user, data)
+    validate_organization(db, data.organizacao_id)
+    if data.veiculo_id is not None:
+        vehicle = get_or_404(db, Veiculo, data.veiculo_id)
+        if vehicle.organizacao_id != data.organizacao_id:
+            raise HTTPException(422, "Veículo deve pertencer à organização da rota")
+    if data.motorista_id is not None:
+        driver = validate_driver(db, data.motorista_id)
+        if driver.organizacao_id != data.organizacao_id:
+            raise HTTPException(422, "Motorista deve pertencer à organização da rota")
+
+    if not data.pedido_ids:
+        raise HTTPException(422, "Selecione ao menos um pedido para gerar a rota")
+
+    pedido_ids = list(dict.fromkeys(data.pedido_ids))
+    orders = []
+    for pedido_id in pedido_ids:
+        pedido = get_or_404(db, Pedido, pedido_id)
+        if pedido.cliente_id is None:
+            raise HTTPException(422, f"Pedido {pedido_id} sem cliente associado")
+        if pedido.endereco_entrega_id is None:
+            raise HTTPException(422, f"Pedido {pedido_id} sem endereço de entrega cadastrado")
+        get_or_404(db, Endereco, pedido.endereco_entrega_id)
+        orders.append(pedido)
+
+    collection_addresses: list[Endereco] = []
+    for ponto_id in data.pontos_coleta_ids:
+        org = get_or_404(db, Organizacao, ponto_id)
+        if org.endereco_id is not None:
+            collection_addresses.append(get_or_404(db, Endereco, org.endereco_id))
+
+    deliveries = []
+    for index, pedido in enumerate(orders, start=1):
+        existing = db.scalar(select(Entrega).where(Entrega.pedido_id == pedido.id))
+        if existing is None:
+            origin_id = collection_addresses[0].id if collection_addresses else pedido.endereco_entrega_id
+            existing = Entrega(
+                pedido_id=pedido.id,
+                entregador_id=data.motorista_id,
+                endereco_origem_id=origin_id,
+                endereco_destino_id=pedido.endereco_entrega_id,
+                status=StatusEntrega.AGUARDANDO_COLETA,
+                observacoes=f"Gerada automaticamente na rota {data.nome}",
+            )
+            db.add(existing)
+            db.flush()
+        deliveries.append(existing)
+
+    rota = Rota(
+        nome=data.nome,
+        descricao=data.descricao,
+        organizacao_id=data.organizacao_id,
+        veiculo_id=data.veiculo_id,
+        motorista_id=data.motorista_id,
+        status=data.status,
+        data_planejada=data.data_planejada or datetime.utcnow(),
+        origem_endereco_id=collection_addresses[0].id if collection_addresses else None,
+        destino_endereco_id=orders[-1].endereco_entrega_id,
+        observacoes=data.observacoes,
+    )
+    rota.entregas = [
+        RotaEntrega(
+            entrega_id=delivery.id,
+            ordem_visita=index,
+            sequencia_otimizada=index,
+        )
+        for index, delivery in enumerate(deliveries, start=1)
+    ]
     db.add(rota)
     commit(db)
     return rota

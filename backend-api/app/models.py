@@ -114,14 +114,18 @@ class Veiculo(TimestampMixin, Base):
 
 
 class StatusRota(str, enum.Enum):
+    RASCUNHO = "RASCUNHO"
+    OTIMIZANDO = "OTIMIZANDO"
+    PRONTA = "PRONTA"
+    AGUARDANDO_ACEITE = "AGUARDANDO_ACEITE"
+    EM_EXECUCAO = "EM_EXECUCAO"
+    PAUSADA = "PAUSADA"
+    CONCLUIDA = "CONCLUIDA"
+    CANCELADA = "CANCELADA"
     PLANEJADA = "PLANEJADA"
     AGUARDANDO_MOTORISTA = "AGUARDANDO_MOTORISTA"
     AGUARDANDO_VEICULO = "AGUARDANDO_VEICULO"
-    PRONTA = "PRONTA"
-    EM_EXECUCAO = "EM_EXECUCAO"
-    PAUSADA = "PAUSADA"
     FINALIZADA = "FINALIZADA"
-    CANCELADA = "CANCELADA"
 
 
 class TipoEventoRota(str, enum.Enum):
@@ -271,6 +275,7 @@ class Pedido(TimestampMixin, Base):
     __tablename__ = "pedidos"
     id: Mapped[int] = mapped_column(primary_key=True)
     cliente_id: Mapped[int] = mapped_column(ForeignKey("clientes.id"), index=True)
+    endereco_entrega_id: Mapped[int | None] = mapped_column(ForeignKey("enderecos.id"), index=True)
     numero_pedido: Mapped[str] = mapped_column(String(30), unique=True, index=True)
     status: Mapped[StatusPedido] = mapped_column(Enum(StatusPedido), default=StatusPedido.ABERTO)
     prioridade: Mapped[Prioridade] = mapped_column(Enum(Prioridade), default=Prioridade.NORMAL)
@@ -279,6 +284,7 @@ class Pedido(TimestampMixin, Base):
     observacoes: Mapped[str | None] = mapped_column(Text)
     criado_por: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
     cliente: Mapped[Cliente] = relationship()
+    endereco_entrega: Mapped[Endereco | None] = relationship(foreign_keys=[endereco_entrega_id])
     itens: Mapped[list["PedidoItem"]] = relationship(cascade="all, delete-orphan")
 
 

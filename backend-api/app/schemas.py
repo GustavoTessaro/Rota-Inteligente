@@ -205,7 +205,7 @@ class RotaCreate(BaseModel):
     organizacao_id: int
     veiculo_id: int | None = None
     motorista_id: int | None = None
-    status: StatusRota = StatusRota.PLANEJADA
+    status: StatusRota = StatusRota.OTIMIZANDO
     data_planejada: datetime | None = None
     data_inicio: datetime | None = None
     data_conclusao: datetime | None = None
@@ -226,6 +226,20 @@ class RotaCreate(BaseModel):
     observacoes: str | None = None
     entregas: list[RotaEntregaIn] = Field(default_factory=list)
 
+
+class RotaGerarIn(BaseModel):
+    nome: str = Field(min_length=2, max_length=150)
+    descricao: str | None = None
+    organizacao_id: int
+    veiculo_id: int | None = None
+    motorista_id: int | None = None
+    pedido_ids: list[int] = Field(min_length=1)
+    pontos_coleta_ids: list[int] = Field(default_factory=list)
+    status: StatusRota = StatusRota.OTIMIZANDO
+    data_planejada: datetime | None = None
+    progresso_percentual: int = Field(default=0, ge=0, le=100)
+    observacoes: str | None = None
+
     @field_validator("nome", "descricao", "observacoes", mode="before")
     @classmethod
     def strip_text(cls, value):
@@ -233,7 +247,7 @@ class RotaCreate(BaseModel):
             return value.strip() or None
         return value
 
-    @field_validator("progresso_percentual")
+    @field_validator("progresso_percentual", mode="before")
     @classmethod
     def validate_progress(cls, value):
         if value is None:
@@ -484,6 +498,7 @@ class PedidoItemOut(PedidoItemIn, ORMModel):
 
 class PedidoCreate(BaseModel):
     cliente_id: int
+    endereco_entrega_id: int | None = None
     prioridade: Prioridade = Prioridade.NORMAL
     forma_pagamento: str | None = None
     observacoes: str | None = None
@@ -493,6 +508,7 @@ class PedidoCreate(BaseModel):
 class PedidoOut(ORMModel):
     id: int
     cliente_id: int
+    endereco_entrega_id: int | None
     numero_pedido: str
     status: StatusPedido
     prioridade: Prioridade
