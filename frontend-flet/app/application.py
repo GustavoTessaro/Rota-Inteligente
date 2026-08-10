@@ -281,6 +281,10 @@ class DeliveryApp:
             else:
                 self.dashboard_refresh_controller.stop()
 
+            # O shell do usuário seleciona ações pelo índice do menu lateral. Para manter o
+            # fluxo operacional solicitado, o item de Gestão de Entregas precisa resolver para
+            # a visão de geração/atribuição e o item de Rotas para o acompanhamento de rotas.
+            # O Dashboard permanece como primeira tela pública.
             actions = [self.dashboard_view, self.delivery_management_view, self.routes_view]
             if not driver:
                 actions += [
@@ -295,7 +299,10 @@ class DeliveryApp:
                     self.reports_view,
                     self.users_view,
                 ]
-            actions[selected_index]()
+            if selected_index < len(actions):
+                actions[selected_index]()
+            else:
+                self.notify("Tela não disponível na navegação atual.", True)
 
         rail = ft.NavigationRail(
             selected_index=0, destinations=destinations, on_change=navigate,
