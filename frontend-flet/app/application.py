@@ -572,6 +572,105 @@ class DeliveryApp:
         except ApiError as exc:
             self.notify(str(exc), True)
 
+    def routes_view(self, offset=0, status_filter=""):
+        page_size = 10
+        try:
+            params = [f"limit={page_size}", f"offset={offset}"]
+            if status_filter:
+                params.append(f"status={status_filter}")
+            routes = self.api.request("GET", "/rotas?" + "&".join(params))
+            status_dropdown = ft.Dropdown(
+                label="Status",
+                value=status_filter or None,
+                options=[self.option(value) for value in self.route_status_options()],
+            )
+            rows = []
+            if self.user["perfil"] == "MOTORISTA":
+                for item in routes:
+                    rows.append(self._driver_route_panel(item))
+            else:
+                for item in routes:
+                    status = item["status"]
+                    actions = [
+                        ft.IconButton(
+                            ft.Icons.INFO,
+                            tooltip="Detalhes da rota",
+                            on_click=lambda _, rota=item: self.route_details_dialog(rota),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.PLAY_ARROW,
+                            tooltip="Iniciar rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status in {"EM_EXECUCAO", "FINALIZADA", "CANCELADA"},
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO"),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.PAUSE,
+                            tooltip="Pausar rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status != "EM_EXECUCAO",
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "PAUSADA", event="PAUSA", observation="Pausada pela interface"),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.PLAY_ARROW,
+                            tooltip="Retomar rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status != "PAUSADA",
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO", event="RETOMADA", observation="Retomada pela interface"),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.DONE,
+                            tooltip="Concluir rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status not in {"EM_EXECUCAO", "PAUSADA", "PRONTA"},
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "FINALIZADA"),
+                        ),
+                        ft.IconButton(
+                            ft.Icons.CANCEL,
+                            tooltip="Cancelar rota",
+                            visible=self.user["perfil"] != "MOTORISTA",
+                            disabled=status in {"FINALIZADA", "CANCELADA"},
+                            on_click=lambda _, rota=item: self.change_route_status(rota, "CANCELADA"),
+                        ),
+                    ]
+                    rows.append(ft.ListTile(
+                        leading=ft.Icon(ft.Icons.TRIP_ORIGIN, color=ft.Colors.PURPLE),
+                        title=ft.Text(f'{item["nome"]} · {status.replace("_", " ")}'),
+                        subtitle=ft.Text(
+                            f'Veículo: {item["veiculo_id"] or "-"} · Motorista: {item["motorista_id"] or "-"} '
+                            f'· Entregas: {len(item.get("entregas") or [])} · Progresso: {item.get("progresso_percentual") or 0}%'
+                        ),
+                        trailing=ft.Row(actions, tight=True),
+                    ))
+            map_control = getattr(self, "map_control", None)
+            self.content.controls = [
+                self.header_bar("Rotas", f"{len(routes)} rota(s)", [
+                    ft.FilledButton("Nova rota", icon=ft.Icons.ADD,
+                                    visible=self.user["perfil"] in ("ADMIN", "GESTOR"),
+                                    on_click=lambda _: self.create_route_dialog()),
+                    self.page_controls(
+                        lambda _: self.routes_view(max(0, offset - page_size), status_filter),
+                        lambda _: self.routes_view(offset + page_size, status_filter),
+                        can_previous=offset > 0,
+                        can_next=len(routes) == page_size,
+                    ),
+                ]),
+                ft.Container(ft.Row([
+                    status_dropdown,
+                    ft.IconButton(
+                        ft.Icons.SEARCH,
+                        tooltip="Filtrar",
+                        on_click=lambda _: self.routes_view(0, status_dropdown.value or ""),
+                    ),
+                    ft.IconButton(ft.Icons.CLEAR, tooltip="Limpar", on_click=lambda _: self.routes_view()),
+                ]), padding=20),
+                ft.Container(ft.Column(rows or [ft.Text("Nenhuma rota encontrada.")]), padding=10),
+                ft.Container(map_control, padding=10) if map_control else ft.Container(),
+            ]
+            self.page.update()
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
     def route_status_options(self):
         return [
             "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO",
