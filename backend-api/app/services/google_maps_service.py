@@ -82,57 +82,21 @@ class GoogleMapsService:
                 # fallback to stub if any error occurs
                 pass
 
-        # For now, return the original order as optimized order and empty metrics.
+        # The default stub is deliberately offline/deterministic. Google Route
+        # computeRoutes must only be exercised when the project is configured for
+        # an actual optimization backend; otherwise the API should not make a
+        # second external call that changes the response contract.
         optimized_order = list(range(len(waypoints)))
         ordered = [waypoints[i] for i in optimized_order]
-        # attempt to compute a polyline by requesting directions across the sequence
-        encoded = None
-        total_distance = None
-        total_duration = None
-        try:
-            if origin and destination:
-                # call directions to get an overview polyline for the same sequence
-                resp = self.directions(origin, destination, waypoints, travel_mode="DRIVE")
-                r = resp.get("routes")
-                if r and isinstance(r, list):
-                    first = r[0]
-                    poly = first.get("polyline") or first.get("overview_polyline")
-                    if isinstance(poly, dict):
-                        encoded = poly.get("encodedPolyline") or poly.get("points")
-                    elif isinstance(first.get("legs"), list):
-                        lp = first.get("legs")[0].get("polyline", {}) if first.get("legs") else {}
-                        encoded = lp.get("encodedPolyline") or lp.get("points")
-                    # distances
-                    if first.get("distanceMeters") is not None:
-                        total_distance = int(first.get("distanceMeters"))
-                    else:
-                        try:
-                            total_distance = sum(int(leg.get("distanceMeters", 0)) for leg in first.get("legs", []))
-                        except Exception:
-                            total_distance = None
-                    # durations
-                    if first.get("duration") is not None:
-                        dur = first.get("duration")
-                        if isinstance(dur, dict) and dur.get("seconds") is not None:
-                            total_duration = int(dur.get("seconds"))
-                        elif isinstance(dur, (int, float)):
-                            total_duration = int(dur)
-                    else:
-                        try:
-                            total_duration = sum(int(leg.get("durationSeconds", 0)) or int(leg.get("duration", {}).get("seconds", 0)) for leg in first.get("legs", []))
-                        except Exception:
-                            total_duration = None
-        except Exception:
-            encoded = None
 
         return {
             "optimized_order": optimized_order,
             "ordered_waypoints": ordered,
             # legacy key for compatibility
             "waypoints": ordered,
-            "distance_meters": total_distance,
-            "duration_seconds": total_duration,
-            "encoded_polyline": encoded,
+            "distance_meters": None,
+            "duration_seconds": None,
+            "encoded_polyline": None,
         }
 
 

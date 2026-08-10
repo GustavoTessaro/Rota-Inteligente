@@ -40,15 +40,38 @@ def seed_database(db: Session) -> None:
     db.add_all(clients)
     db.flush()
 
+    # Endereços por cliente: todos válidos e coerentes na tabela de endereços,
+    # com os pedidos apontando para um desses registros.
     addresses = []
+    address_by_client: dict[int, list[Endereco]] = {}
     for i, client in enumerate(clients, 1):
-        addresses.extend([
-            Endereco(cliente_id=client.id, logradouro=f"Rua Origem {i}", numero=str(i),
-                     bairro="Centro", cidade="São Paulo", estado="SP", cep="01000-000", tipo="ORIGEM"),
-            Endereco(cliente_id=client.id, logradouro=f"Rua Destino {i}", numero=str(i + 100),
-                     bairro="Bairro", cidade="São Paulo", estado="SP", cep="02000-000", tipo="DESTINO"),
-        ])
+        client_addresses = [
+            Endereco(
+                cliente_id=client.id,
+                logradouro=f"Rua Origem {i}",
+                numero=str(i),
+                bairro="Centro",
+                cidade="São Paulo",
+                estado="SP",
+                cep="01000-000",
+                tipo="ORIGEM",
+            ),
+            Endereco(
+                cliente_id=client.id,
+                logradouro=f"Rua Destino {i}",
+                numero=str(i + 100),
+                bairro="Bairro",
+                cidade="São Paulo",
+                estado="SP",
+                cep="02000-000",
+                tipo="DESTINO",
+            ),
+        ]
+        addresses.extend(client_addresses)
+        address_by_client[client.id] = client_addresses
     db.add_all(addresses)
+    db.flush()
+
     products = [
         Produto(nome=f"Produto {i}", descricao="Item para entrega", peso=Decimal("1.0"),
                 volume=Decimal("0.5"), valor_declarado=Decimal(str(i * 10)))
@@ -58,12 +81,37 @@ def seed_database(db: Session) -> None:
     db.flush()
 
     statuses = list(StatusEntrega)
-    organizations = [
-        Organizacao(nome="Operação Norte", cnpj="12345678000199", email="norte@sistema.com",
-                     telefone="11999990001", endereco="Av. Norte, 100"),
-        Organizacao(nome="Operação Sul", cnpj="12345678000270", email="sul@sistema.com",
-                     telefone="11999990002", endereco="Av. Sul, 200"),
-    ]
+
+    # Organizations as collection points. Each organization receives a valid address
+    # from the same shared Enderecos table.
+    organizations = []
+    organization_addresses = []
+    for index, org_name in enumerate(["Operação Norte", "Operação Sul"], start=1):
+        org_client = clients[(index - 1) % len(clients)]
+        org_address = Endereco(
+            cliente_id=org_client.id,
+            logradouro=f"Av. {org_name.split()[-1]}",
+            numero=str(100 + index),
+            bairro="Centro",
+            cidade="São Paulo",
+            estado="SP",
+            cep="01000-000",
+            tipo="ORIGEM",
+        )
+        organization_addresses.append(org_address)
+        organizations.append(
+            Organizacao(
+                nome=org_name,
+                cnpj="12345678000199" if index == 1 else "12345678000270",
+                email=f"{'norte' if index == 1 else 'sul'}@sistema.com",
+                telefone=f"1199999000{index}",
+                endereco=f"{'Av. Norte, 100' if index == 1 else 'Av. Sul, 200'}",
+            )
+        )
+    db.add_all(organization_addresses)
+    db.flush()
+    for org, org_address in zip(organizations, organization_addresses, strict=True):
+        org.endereco_id = org_address.id
     db.add_all(organizations)
     db.flush()
 
@@ -88,11 +136,17 @@ def seed_database(db: Session) -> None:
 
     for i in range(15):
         client = clients[i % len(clients)]
+        client_delivery_addresses = address_by_client[client.id]
+        delivery_address = client_delivery_addresses[(i % len(client_delivery_addresses))]
         product = products[i % len(products)]
         order = Pedido(
-            cliente_id=client.id, numero_pedido=f"PED-DEMO-{i + 1:03d}",
-            prioridade=list(Prioridade)[i % 4], valor_total=product.valor_declarado,
-            criado_por=users[1].id, forma_pagamento="A combinar",
+            cliente_id=client.id,
+            endereco_entrega_id=delivery_address.id,
+            numero_pedido=f"PED-DEMO-{i + 1:03d}",
+            prioridade=list(Prioridade)[i % 4],
+            valor_total=product.valor_declarado,
+            criado_por=users[1].id,
+            forma_pagamento="A combinar",
         )
         order.itens = [PedidoItem(produto_id=product.id, quantidade=1,
                                   valor_unitario=product.valor_declarado)]
@@ -100,17 +154,22 @@ def seed_database(db: Session) -> None:
         db.flush()
         status = statuses[i % len(statuses)]
         delivery = Entrega(
-            pedido_id=order.id, entregador_id=users[3 + (i % 3)].id,
-            endereco_origem_id=addresses[(i % 5) * 2].id,
-            endereco_destino_id=addresses[(i % 5) * 2 + 1].id,
-            status=status, previsao_saida=datetime.now() - timedelta(hours=2),
+            pedido_id=order.id,
+            entregador_id=users[3 + (i % 3)].id,
+            endereco_origem_id=address_by_client[client.id][0].id,
+            endereco_destino_id=delivery_address.id,
+            status=status,
+            previsao_saida=datetime.now() - timedelta(hours=2),
             previsao_entrega=datetime.now() + timedelta(hours=(i % 7) - 3),
         )
         db.add(delivery)
         db.flush()
         db.add(HistoricoEntrega(
-            entrega_id=delivery.id, status_anterior=None, status_novo=status.value,
-            observacao="Carga inicial", alterado_por=users[0].id,
+            entrega_id=delivery.id,
+            status_anterior=None,
+            status_novo=status.value,
+            observacao="Carga inicial",
+            alterado_por=users[0].id,
         ))
     db.flush()
     route = Rota(
@@ -121,8 +180,8 @@ def seed_database(db: Session) -> None:
         motorista_id=users[3].id,
         status=StatusRota.PLANEJADA,
         data_planejada=datetime.now() + timedelta(hours=1),
-        origem_endereco_id=addresses[0].id,
-        destino_endereco_id=addresses[1].id,
+        origem_endereco_id=organization_addresses[0].id,
+        destino_endereco_id=addresses[0].id,
         distancia_prevista=Decimal("20.0"),
         duracao_prevista=Decimal("0.75"),
         observacoes="Rota de teste",
