@@ -41,12 +41,27 @@ class DeliveryApp:
         self.connection_indicator = None
         self.dashboard_data = {}
         self.dashboard_active = False
+        self.delivery_management_selection = {
+            "pedido_ids": [],
+            "pontos_coleta_ids": [],
+        }
+        self.generated_route = None
+        self.generated_route_optimization = None
         self.dashboard_refresh_controller = DashboardRefreshController(callback=self._refresh_dashboard, interval=5.0)
         self.content = ft.Column(
             expand=True,
             scroll=ft.ScrollMode.AUTO,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
+
+    def _toggle_delivery_order(self, order_id, checked):
+        selected = self.delivery_management_selection.get("pedido_ids", [])
+        if checked and order_id not in selected:
+            selected.append(order_id)
+        elif not checked and order_id in selected:
+            selected = [item for item in selected if item != order_id]
+        self.delivery_management_selection["pedido_ids"] = selected
+        self.page.update()
 
     def start(self):
         self.page.title = "Gestão de Entregas"
@@ -239,21 +254,21 @@ class DeliveryApp:
         admin_user = self.user["perfil"] == "ADMIN"
         destinations = [
             ft.NavigationRailDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
-            ft.NavigationRailDestination(icon=ft.Icons.LOCAL_SHIPPING, label="Entregas"),
+            ft.NavigationRailDestination(icon=ft.Icons.LOCAL_SHIPPING, label="Gestão de Entregas"),
             ft.NavigationRailDestination(icon=ft.Icons.TRIP_ORIGIN, label="Rotas"),
-            ft.NavigationRailDestination(icon=ft.Icons.DIRECTIONS_CAR, label="Veículos"),
         ]
         if not driver:
             destinations += [
+                ft.NavigationRailDestination(icon=ft.Icons.RECEIPT_LONG, label="Pedidos"),
                 ft.NavigationRailDestination(icon=ft.Icons.PEOPLE, label="Clientes"),
+                ft.NavigationRailDestination(icon=ft.Icons.INVENTORY_2, label="Produtos"),
+                ft.NavigationRailDestination(icon=ft.Icons.DIRECTIONS_CAR, label="Veículos"),
             ]
             if admin_user:
                 destinations += [
                     ft.NavigationRailDestination(icon=ft.Icons.DOMAIN, label="Organizações"),
                 ]
             destinations += [
-                ft.NavigationRailDestination(icon=ft.Icons.RECEIPT_LONG, label="Pedidos"),
-                ft.NavigationRailDestination(icon=ft.Icons.INVENTORY_2, label="Produtos"),
                 ft.NavigationRailDestination(icon=ft.Icons.BAR_CHART, label="Relatórios"),
                 ft.NavigationRailDestination(icon=ft.Icons.MANAGE_ACCOUNTS, label="Usuários"),
             ]
@@ -266,14 +281,19 @@ class DeliveryApp:
             else:
                 self.dashboard_refresh_controller.stop()
 
-            actions = [self.dashboard_view, self.deliveries_view, self.routes_view, self.vehicles_view]
+            actions = [self.dashboard_view, self.delivery_management_view, self.routes_view]
             if not driver:
-                actions += [self.clients_view]
+                actions += [
+                    self.orders_view,
+                    self.clients_view,
+                    self.products_view,
+                    self.vehicles_view,
+                ]
                 if admin_user:
                     actions += [self.organizations_view]
                 actions += [
-                    self.orders_view, self.products_view,
-                    self.reports_view, self.users_view,
+                    self.reports_view,
+                    self.users_view,
                 ]
             actions[selected_index]()
 
@@ -722,104 +742,243 @@ class DeliveryApp:
         except ApiError as exc:
             self.notify(str(exc), True)
 
-    def routes_view(self, offset=0, status_filter=""):
-        page_size = 10
+    def delivery_management_view(self):
         try:
-            params = [f"limit={page_size}", f"offset={offset}"]
-            if status_filter:
-                params.append(f"status={status_filter}")
-            routes = self.api.request("GET", "/rotas?" + "&".join(params))
-            status_dropdown = ft.Dropdown(
-                label="Status",
-                value=status_filter or None,
-                options=[self.option(value) for value in self.route_status_options()],
-            )
-            rows = []
-            if self.user["perfil"] == "MOTORISTA":
-                for item in routes:
-                    rows.append(self._driver_route_panel(item))
-            else:
-                for item in routes:
-                    status = item["status"]
-                    actions = [
-                        ft.IconButton(
-                            ft.Icons.INFO,
-                            tooltip="Detalhes da rota",
-                            on_click=lambda _, rota=item: self.route_details_dialog(rota),
-                        ),
-                        ft.IconButton(
-                            ft.Icons.PLAY_ARROW,
-                            tooltip="Iniciar rota",
-                            visible=self.user["perfil"] != "MOTORISTA",
-                            disabled=status in {"EM_EXECUCAO", "FINALIZADA", "CANCELADA"},
-                            on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO"),
-                        ),
-                        ft.IconButton(
-                            ft.Icons.PAUSE,
-                            tooltip="Pausar rota",
-                            visible=self.user["perfil"] != "MOTORISTA",
-                            disabled=status != "EM_EXECUCAO",
-                            on_click=lambda _, rota=item: self.change_route_status(rota, "PAUSADA", event="PAUSA", observation="Pausada pela interface"),
-                        ),
-                        ft.IconButton(
-                            ft.Icons.PLAY_ARROW,
-                            tooltip="Retomar rota",
-                            visible=self.user["perfil"] != "MOTORISTA",
-                            disabled=status != "PAUSADA",
-                            on_click=lambda _, rota=item: self.change_route_status(rota, "EM_EXECUCAO", event="RETOMADA", observation="Retomada pela interface"),
-                        ),
-                        ft.IconButton(
-                            ft.Icons.DONE,
-                            tooltip="Concluir rota",
-                            visible=self.user["perfil"] != "MOTORISTA",
-                            disabled=status not in {"EM_EXECUCAO", "PAUSADA", "PRONTA"},
-                            on_click=lambda _, rota=item: self.change_route_status(rota, "FINALIZADA"),
-                        ),
-                        ft.IconButton(
-                            ft.Icons.CANCEL,
-                            tooltip="Cancelar rota",
-                            visible=self.user["perfil"] != "MOTORISTA",
-                            disabled=status in {"FINALIZADA", "CANCELADA"},
-                            on_click=lambda _, rota=item: self.change_route_status(rota, "CANCELADA"),
-                        ),
-                    ]
-                    rows.append(ft.ListTile(
-                        leading=ft.Icon(ft.Icons.TRIP_ORIGIN, color=ft.Colors.PURPLE),
-                        title=ft.Text(f'{item["nome"]} · {status.replace("_", " ")}'),
-                        subtitle=ft.Text(
-                            f'Veículo: {item["veiculo_id"] or "-"} · Motorista: {item["motorista_id"] or "-"} '
-                            f'· Entregas: {len(item.get("entregas") or [])} · Progresso: {item.get("progresso_percentual") or 0}%'
-                        ),
-                        trailing=ft.Row(actions, tight=True),
-                    ))
-            map_control = getattr(self, "map_control", None)
-            self.content.controls = [
-                self.header_bar("Rotas", f"{len(routes)} rota(s)", [
-                    ft.FilledButton("Nova rota", icon=ft.Icons.ADD,
-                                    visible=self.user["perfil"] in ("ADMIN", "GESTOR"),
-                                    on_click=lambda _: self.create_route_dialog()),
-                    self.page_controls(
-                        lambda _: self.routes_view(max(0, offset - page_size), status_filter),
-                        lambda _: self.routes_view(offset + page_size, status_filter),
-                        can_previous=offset > 0,
-                        can_next=len(routes) == page_size,
-                    ),
-                ]),
-                ft.Container(ft.Row([
-                    status_dropdown,
-                    ft.IconButton(
-                        ft.Icons.SEARCH,
-                        tooltip="Filtrar",
-                        on_click=lambda _: self.routes_view(0, status_dropdown.value or ""),
-                    ),
-                    ft.IconButton(ft.Icons.CLEAR, tooltip="Limpar", on_click=lambda _: self.routes_view()),
-                ]), padding=20),
-                ft.Container(ft.Column(rows or [ft.Text("Nenhuma rota encontrada.")]), padding=10),
-                ft.Container(map_control, padding=10) if map_control else ft.Container(),
-            ]
-            self.page.update()
+            orders = self.api.request("GET", "/pedidos?limit=100&offset=0")
+            organizations = self.api.request("GET", "/organizacoes?limit=100&offset=0")
+            vehicles = self.api.request("GET", "/veiculos?limit=100&offset=0")
+            users = self.api.request("GET", "/usuarios?limit=100&offset=0")
         except ApiError as exc:
             self.notify(str(exc), True)
+            return
+
+        available_orders = [item for item in orders if item.get("status") not in {"CANCELADO", "FINALIZADO"}]
+        order_checkboxes = []
+        for order in available_orders:
+            address_id = order.get("endereco_entrega_id")
+            address = None
+            cliente_nome = "Cliente"
+            try:
+                if address_id:
+                    client = self.api.request("GET", f"/clientes/{order['cliente_id']}")
+                    cliente_nome = client.get("nome") or "Cliente"
+                    addresses = self.api.request("GET", f"/clientes/{order['cliente_id']}/enderecos")
+                    address = next((item for item in addresses if item["id"] == address_id), None)
+                address_label = address and f"{address.get('logradouro', '')}, {address.get('numero', '')} - {address.get('bairro', '')}, {address.get('cidade', '')}" or "Endereço não cadastrado"
+            except Exception:
+                address_label = "Endereço não cadastrado"
+            order_checkboxes.append(
+                ft.Checkbox(
+                    label=f"Pedido #{order['id']} — {order.get('numero_pedido') or '-'} — {cliente_nome} — {address_label} — {order.get('prioridade') or '-'}",
+                    value=(order['id'] in self.delivery_management_selection.get("pedido_ids", [])),
+                    on_change=lambda e, order_id=order["id"]: self._toggle_delivery_order(order_id, e.control.value),
+                )
+            )
+
+        collection_options = [self.option(str(item["id"]), item["nome"]) for item in organizations if item.get("ativo", True)]
+            
+        collection_dropdown = ft.Dropdown(
+            label="Ponto de coleta",
+            options=collection_options,
+            value=None,
+            hint_text="Selecione uma organização como ponto de coleta",
+        )
+
+        def add_collection(_):
+            if collection_dropdown.value:
+                org_id = int(collection_dropdown.value)
+                selected = self.delivery_management_selection.get("pontos_coleta_ids", [])
+                if org_id not in selected:
+                    selected.append(org_id)
+                    self.delivery_management_selection["pontos_coleta_ids"] = selected
+                self.delivery_management_view()
+
+        def remove_collection(org_id):
+            selected = [item for item in self.delivery_management_selection.get("pontos_coleta_ids", []) if item != org_id]
+            self.delivery_management_selection["pontos_coleta_ids"] = selected
+            self.delivery_management_view()
+
+        selected_orgs = [item for item in organizations if item["id"] in self.delivery_management_selection.get("pontos_coleta_ids", [])]
+        selected_collection_tiles = [
+            ft.Row([
+                ft.Text(f"{org['nome']}", weight=ft.FontWeight.BOLD),
+                ft.IconButton(ft.Icons.DELETE, tooltip="Remover", on_click=lambda _, org_id=org["id"]: remove_collection(org_id)),
+            ]) for org in selected_orgs
+        ]
+
+        def generate(_):
+            pedido_ids = self.delivery_management_selection.get("pedido_ids") or []
+            pontos_coleta_ids = self.delivery_management_selection.get("pontos_coleta_ids") or []
+            if not pedido_ids:
+                self.notify("Selecione ao menos um pedido para gerar a rota.", True)
+                return
+            org_id = self.user.get("organizacao_id") or (organizations[0]["id"] if organizations else None)
+            if org_id is None:
+                self.notify("Organização atual não está definida.", True)
+                return
+            for pedido_id in pedido_ids:
+                order = next((item for item in orders if item["id"] == pedido_id), None)
+                if not order:
+                    self.notify(f"Pedido {pedido_id} não encontrado.", True)
+                    return
+                if order.get("endereco_entrega_id") is None:
+                    self.notify(f"Pedido #{pedido_id} precisa de endereço de entrega válido antes de entrar em rota.", True)
+                    return
+            payload = {
+                "nome": f"Rota gerada {datetime.utcnow().strftime('%d/%m/%Y %H:%M')}",
+                "descricao": "Rota gerada a partir da Gestão de Entregas",
+                "organizacao_id": int(org_id),
+                "pedido_ids": pedido_ids,
+                "pontos_coleta_ids": pontos_coleta_ids,
+                "status": "OTIMIZANDO",
+            }
+            try:
+                generated = self.api.request("POST", "/rotas/gerar", json=payload)
+                route = self.api.request("GET", f"/rotas/{generated['id']}")
+                self.generated_route = route
+                self.generated_route_optimization = self.api.request("POST", f"/rotas/{route['id']}/otimizar")
+                self.notify("Rota gerada com sucesso.")
+                self.delivery_management_view()
+            except ApiError as exc:
+                self.notify(str(exc), True)
+
+        if self.generated_route:
+            route = self.generated_route
+            opt = self.generated_route_optimization or {}
+            summary = ft.Column([
+                ft.Text("Resumo", weight=ft.FontWeight.BOLD, size=20),
+                ft.Text(f"Distância estimada: {opt.get('distance_meters') or route.get('distancia_prevista') or '-'} m"),
+                ft.Text(f"Duração estimada: {opt.get('duration_seconds') or route.get('duracao_prevista') or '-'} s"),
+                ft.Text(f"Quantidade de paradas: {len(route.get('entregas') or [])}"),
+                ft.Text(f"Quantidade de pedidos: {len(route.get('entregas') or [])}"),
+                ft.Text(f"Pontos de coleta: {self.delivery_management_selection.get('pontos_coleta_ids') or '-'}"),
+                ft.Text(f"Motorista: {route.get('motorista_id') or '-'}"),
+                ft.Text(f"Veículo: {route.get('veiculo_id') or '-'}"),
+            ])
+            steps = []
+            if opt.get("ordered_waypoints"):
+                for idx, point in enumerate(opt["ordered_waypoints"], start=1):
+                    label = point.get("label") or f"Parada {idx}"
+                    steps.append(ft.Text(f"{idx}. {label}"))
+            else:
+                for idx, entry in enumerate(route.get("entregas") or [], start=1):
+                    steps.append(ft.Text(f"{idx}. Entrega #{entry.get('entrega_id')}"))
+        else:
+            summary = ft.Column([
+                ft.Text("Resumo", weight=ft.FontWeight.BOLD, size=20),
+                ft.Text("Distância estimada: -"),
+                ft.Text("Duração estimada: -"),
+                ft.Text("Quantidade de paradas: -"),
+                ft.Text("Quantidade de pedidos: -"),
+                ft.Text("Pontos de coleta: -"),
+                ft.Text("Motorista: -"),
+                ft.Text("Veículo: -"),
+            ])
+            steps = [ft.Text("Nenhuma rota calculada.")]
+
+        map_preview = None
+        if self.generated_route and self.generated_route_optimization:
+            markers = []
+            for waypoint in (self.generated_route_optimization or {}).get("ordered_waypoints") or []:
+                lat = waypoint.get("lat") or waypoint.get("latitude")
+                lng = waypoint.get("lng") or waypoint.get("longitude")
+                if lat is not None and lng is not None:
+                    markers.append({"lat": lat, "lng": lng, "title": waypoint.get("label") or "Parada"})
+            map_preview = MapView(markers=markers, height=340).build()
+            encoded = (self.generated_route_optimization or {}).get("encoded_polyline")
+            if encoded:
+                try:
+                    map_preview.draw_polyline(encoded)
+                except Exception:
+                    pass
+        else:
+            map_preview = MapView(markers=[], height=340).build()
+
+        driver_options = [self.option(str(item["id"]), item["nome"]) for item in users if item.get("perfil") == "MOTORISTA" and item.get("ativo")]
+        vehicle_options = [self.option(str(item["id"]), f"{item.get('placa')} · {item.get('modelo')}") for item in vehicles if item.get("ativo")]
+        driver_dropdown = ft.Dropdown(label="Motorista", options=driver_options, value=(str(self.generated_route.get("motorista_id")) if self.generated_route else None))
+        vehicle_dropdown = ft.Dropdown(label="Veículo", options=vehicle_options, value=(str(self.generated_route.get("veiculo_id")) if self.generated_route else None))
+
+        def assign(_):
+            if not self.generated_route:
+                self.notify("Gere a rota antes de atribuir motorista e veículo.", True)
+                return
+            if not driver_dropdown.value:
+                self.notify("Selecione um motorista para a rota.", True)
+                return
+            if not vehicle_dropdown.value:
+                self.notify("Selecione um veículo para a rota.", True)
+                return
+            payload = {
+                "nome": self.generated_route.get("nome"),
+                "descricao": self.generated_route.get("descricao"),
+                "organizacao_id": self.generated_route.get("organizacao_id"),
+                "veiculo_id": int(vehicle_dropdown.value),
+                "motorista_id": int(driver_dropdown.value),
+                "status": self.generated_route.get("status") or "PLANEJADA",
+                "data_planejada": self.generated_route.get("data_planejada"),
+                "origem_endereco_id": self.generated_route.get("origem_endereco_id"),
+                "destino_endereco_id": self.generated_route.get("destino_endereco_id"),
+                "entregas": self.generated_route.get("entregas") or [],
+                "observacoes": self.generated_route.get("observacoes"),
+            }
+            try:
+                self.api.request("PUT", f"/rotas/{self.generated_route['id']}", json=payload)
+                self.notify("Rota atribuída ao motorista com sucesso.")
+                self.routes_view()
+            except ApiError as exc:
+                self.notify(str(exc), True)
+
+        self.content.controls = [
+            self.header_bar("Gestão de Entregas", "Pedidos disponíveis → Seleção → Pontos de coleta → Gerar Rota → Visualizar rota → Atribuir", [
+                ft.FilledButton("Gerar Rota", icon=ft.Icons.ROUTE, on_click=generate),
+                ft.FilledButton("Atribuir Rota ao Motorista", icon=ft.Icons.PERSON, on_click=assign, visible=bool(self.generated_route)),
+            ]),
+            ft.Container(
+                ft.Row([
+                    ft.Container(
+                        ft.Column([
+                            ft.Text("Pedidos disponíveis", size=20, weight=ft.FontWeight.BOLD),
+                            *order_checkboxes,
+                        ], tight=True, scroll=ft.ScrollMode.AUTO, expand=True),
+                        padding=14, border_radius=12, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12), expand=True,
+                    ),
+                    ft.Container(
+                        ft.Column([
+                            ft.Text("Pontos de coleta", size=20, weight=ft.FontWeight.BOLD),
+                            ft.Row([collection_dropdown, ft.FilledButton("Adicionar", on_click=add_collection)]),
+                            ft.Text("Selecionados"),
+                            ft.Column(selected_collection_tiles or [ft.Text("Nenhum ponto de coleta selecionado.")]),
+                        ], tight=True),
+                        padding=14, border_radius=12, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12), expand=True,
+                    ),
+                ], wrap=True, spacing=12),
+                padding=20,
+            ),
+            ft.Container(
+                ft.Row([
+                    ft.Container(summary, padding=14, expand=True, border_radius=12, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                    ft.Container(ft.Column(steps), padding=14, expand=True, border_radius=12, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                ], spacing=12, wrap=True),
+                padding=20,
+            ),
+            ft.Container(
+                ft.Row([
+                    ft.Container(map_preview, expand=True, height=340),
+                    ft.Container(
+                        ft.Column([
+                            ft.Text("Atribuição", size=20, weight=ft.FontWeight.BOLD),
+                            driver_dropdown,
+                            vehicle_dropdown,
+                            ft.FilledButton("Atribuir Rota ao Motorista", icon=ft.Icons.CHECK, on_click=assign),
+                        ], tight=True),
+                        padding=14, border_radius=12, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12), expand=True,
+                    ),
+                ], spacing=12),
+                padding=20,
+            ),
+        ]
+        self.page.update()
 
     def route_details_dialog(self, route):
         progress = int(route.get("progresso_percentual") or 0)
