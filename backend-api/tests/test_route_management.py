@@ -24,7 +24,7 @@ def test_route_lifecycle_and_tracking_integration(client: TestClient, admin_head
     delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
 
     create_response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota de Teste Etapa 4",
@@ -34,7 +34,8 @@ def test_route_lifecycle_and_tracking_integration(client: TestClient, admin_head
             "motorista_id": driver["id"],
             "status": "PLANEJADA",
             "data_planejada": datetime.utcnow().replace(microsecond=0).isoformat(),
-            "entregas": [{"entrega_id": delivery["id"], "ordem_visita": 1}],
+            "pedido_ids": [delivery["pedido_id"]],
+            "pontos_coleta_ids": [organization["id"]],
         },
     )
     assert create_response.status_code == 201
@@ -111,7 +112,7 @@ def test_route_can_be_paused_and_resumed_with_progress(client: TestClient, admin
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
 
     create_response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota para pausa",
@@ -120,7 +121,8 @@ def test_route_can_be_paused_and_resumed_with_progress(client: TestClient, admin
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
             "status": "PLANEJADA",
-            "entregas": [{"entrega_id": deliveries[0]["id"], "ordem_visita": 1}],
+            "pedido_ids": [deliveries[0]["pedido_id"]],
+            "pontos_coleta_ids": [organizations[0]["id"]],
         },
     )
     assert create_response.status_code == 201
@@ -163,14 +165,15 @@ def test_route_start_requires_vehicle_and_driver(client: TestClient, admin_heade
     delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
 
     create_response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota sem veículo e motorista",
             "descricao": "Rota para validar início",
             "organizacao_id": organization["id"],
             "status": "PLANEJADA",
-            "entregas": [{"entrega_id": delivery["id"], "ordem_visita": 1}],
+            "pedido_ids": [delivery["pedido_id"]],
+            "pontos_coleta_ids": [organization["id"]],
         },
     )
     assert create_response.status_code == 201
@@ -186,9 +189,32 @@ def test_route_start_requires_vehicle_and_driver(client: TestClient, admin_heade
 
 def test_driver_only_sees_assigned_route(client: TestClient, admin_headers: dict) -> None:
     users = client.get("/api/usuarios", headers=admin_headers).json()
-    driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
-    driver_headers = _login(client, driver["email"])
+    vehicles = client.get("/api/veiculos", headers=admin_headers).json()
+    organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
 
+    driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
+    vehicle = next(item for item in vehicles if item["ativo"])
+    organization = next(item for item in organizations if item["id"] == vehicle["organizacao_id"])
+    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+
+    create_response = client.post(
+        "/api/rotas/gerar",
+        headers=admin_headers,
+        json={
+            "nome": "Rota do Motorista",
+            "descricao": "Rota atribuída a motorista para teste",
+            "organizacao_id": organization["id"],
+            "veiculo_id": vehicle["id"],
+            "motorista_id": driver["id"],
+            "status": "PLANEJADA",
+            "pedido_ids": [delivery["pedido_id"]],
+            "pontos_coleta_ids": [organization["id"]],
+        },
+    )
+    assert create_response.status_code == 201
+
+    driver_headers = _login(client, driver["email"])
     routes = client.get("/api/rotas?limit=50&offset=0", headers=driver_headers).json()
     assert routes
     assert all(item["motorista_id"] == driver["id"] for item in routes)
@@ -206,7 +232,7 @@ def test_route_execution_uses_optimized_order_for_next_stop(client: TestClient, 
     assert len(valid_deliveries) >= 2
 
     route_response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota executada em ordem",
@@ -215,10 +241,8 @@ def test_route_execution_uses_optimized_order_for_next_stop(client: TestClient, 
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
             "status": "PRONTA",
-            "entregas": [
-                {"entrega_id": valid_deliveries[0]["id"], "ordem_visita": 1},
-                {"entrega_id": valid_deliveries[1]["id"], "ordem_visita": 2},
-            ],
+            "pedido_ids": [valid_deliveries[0]["pedido_id"], valid_deliveries[1]["pedido_id"]],
+            "pontos_coleta_ids": [organizations[0]["id"]],
         },
     )
     assert route_response.status_code == 201
@@ -245,7 +269,7 @@ def test_driver_can_complete_current_delivery_and_advance_progress(client: TestC
     valid_deliveries = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
 
     route_response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota de conclusão",
@@ -255,10 +279,8 @@ def test_driver_can_complete_current_delivery_and_advance_progress(client: TestC
             "motorista_id": driver["id"],
             "status": "EM_EXECUCAO",
             "progresso_percentual": 0,
-            "entregas": [
-                {"entrega_id": valid_deliveries[0]["id"], "ordem_visita": 1},
-                {"entrega_id": valid_deliveries[1]["id"], "ordem_visita": 2},
-            ],
+            "pedido_ids": [valid_deliveries[0]["pedido_id"], valid_deliveries[1]["pedido_id"]],
+            "pontos_coleta_ids": [organizations[0]["id"]],
         },
     )
     assert route_response.status_code == 201
@@ -312,7 +334,7 @@ def test_route_finalizes_after_all_deliveries_complete(client: TestClient, admin
     valid_deliveries = [item for item in deliveries if item["status"] != "CANCELADA"][:1]
 
     route_response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota finalizada",
@@ -322,7 +344,8 @@ def test_route_finalizes_after_all_deliveries_complete(client: TestClient, admin
             "motorista_id": driver["id"],
             "status": "EM_EXECUCAO",
             "progresso_percentual": 95,
-            "entregas": [{"entrega_id": valid_deliveries[0]["id"], "ordem_visita": 1}],
+            "pedido_ids": [valid_deliveries[0]["pedido_id"]],
+            "pontos_coleta_ids": [organizations[0]["id"]],
         },
     )
     assert route_response.status_code == 201
@@ -360,7 +383,7 @@ def test_current_backend_does_not_enforce_sequential_delivery_guard(client: Test
     valid_deliveries = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
 
     route_response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota sem trava sequencial",
@@ -369,10 +392,8 @@ def test_current_backend_does_not_enforce_sequential_delivery_guard(client: Test
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
             "status": "EM_EXECUCAO",
-            "entregas": [
-                {"entrega_id": valid_deliveries[0]["id"], "ordem_visita": 1},
-                {"entrega_id": valid_deliveries[1]["id"], "ordem_visita": 2},
-            ],
+            "pedido_ids": [valid_deliveries[0]["pedido_id"], valid_deliveries[1]["pedido_id"]],
+            "pontos_coleta_ids": [organizations[0]["id"]],
         },
     )
     assert route_response.status_code == 201
@@ -399,14 +420,15 @@ def test_gestor_cannot_assign_route_to_other_organization(client: TestClient, ad
     delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
 
     response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=gestor_headers,
         json={
             "nome": "Rota indevida",
             "descricao": "Gestor não pode criar para outra organização",
             "organizacao_id": other_org["id"],
             "status": "PLANEJADA",
-            "entregas": [{"entrega_id": delivery["id"], "ordem_visita": 1}],
+            "pedido_ids": [delivery["pedido_id"]],
+            "pontos_coleta_ids": [other_org["id"]],
         },
     )
     assert response.status_code == 403

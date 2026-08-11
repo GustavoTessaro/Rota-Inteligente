@@ -619,7 +619,7 @@ def test_create_route(client, admin_headers):
     entrega = next(item for item in deliveries if item["status"] != "CANCELADA")
 
     response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota Teste",
@@ -628,7 +628,8 @@ def test_create_route(client, admin_headers):
             "veiculo_id": vehicle["id"],
             "motorista_id": motorista["id"],
             "status": "PLANEJADA",
-            "entregas": [{"entrega_id": entrega["id"], "ordem_visita": 1}],
+            "pedido_ids": [entrega["pedido_id"]],
+            "pontos_coleta_ids": [organization["id"]],
         },
     )
     assert response.status_code == 201
@@ -639,9 +640,32 @@ def test_create_route(client, admin_headers):
 
 
 def test_update_route_status_and_history(client, admin_headers):
-    routes = client.get("/api/rotas?limit=10&offset=0", headers=admin_headers).json()
-    assert routes
-    rota = routes[0]
+    vehicles = client.get("/api/veiculos", headers=admin_headers).json()
+    users = client.get("/api/usuarios", headers=admin_headers).json()
+    organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
+
+    vehicle = next(item for item in vehicles if item["ativo"])
+    motorista = next(item for item in users if item["perfil"] == "MOTORISTA")
+    organization = next(item for item in organizations if item["id"] == vehicle["organizacao_id"])
+    entrega = next(item for item in deliveries if item["status"] != "CANCELADA")
+
+    create_response = client.post(
+        "/api/rotas/gerar",
+        headers=admin_headers,
+        json={
+            "nome": "Rota Teste Status",
+            "descricao": "Rota criada para validar status e histórico",
+            "organizacao_id": organization["id"],
+            "veiculo_id": vehicle["id"],
+            "motorista_id": motorista["id"],
+            "status": "PLANEJADA",
+            "pedido_ids": [entrega["pedido_id"]],
+            "pontos_coleta_ids": [organization["id"]],
+        },
+    )
+    assert create_response.status_code == 201
+    rota = create_response.json()
 
     response = client.patch(
         f'/api/rotas/{rota["id"]}/status',

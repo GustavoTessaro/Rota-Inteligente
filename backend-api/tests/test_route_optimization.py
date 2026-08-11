@@ -26,7 +26,7 @@ def _create_route_with_delivery(client: TestClient, admin_headers: dict) -> dict
             db.commit()
 
     response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota otimizada",
@@ -35,7 +35,8 @@ def _create_route_with_delivery(client: TestClient, admin_headers: dict) -> dict
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
             "status": "PLANEJADA",
-            "entregas": [{"entrega_id": delivery["id"], "ordem_visita": 1}],
+            "pedido_ids": [delivery["pedido_id"]],
+            "pontos_coleta_ids": [organization["id"]],
         },
     )
     assert response.status_code == 201
@@ -48,19 +49,17 @@ def test_optimize_route_requires_existing_route(client: TestClient, admin_header
 
 
 def test_optimize_route_requires_deliveries(client: TestClient, admin_headers: dict) -> None:
-    response = client.post(
-        "/api/rotas",
-        headers=admin_headers,
-        json={
-            "nome": "Rota sem entregas",
-            "descricao": "Deve falhar",
-            "organizacao_id": 1,
-            "status": "PLANEJADA",
-            "entregas": [],
-        },
-    )
-    assert response.status_code == 201
-    route_id = response.json()["id"]
+    with SessionLocal() as db:
+        route = Rota(
+            nome="Rota sem entregas",
+            descricao="Deve falhar",
+            organizacao_id=1,
+            status="PLANEJADA",
+        )
+        db.add(route)
+        db.commit()
+        db.refresh(route)
+        route_id = route.id
 
     optimize = client.post(f"/api/rotas/{route_id}/otimizar", headers=admin_headers)
     assert optimize.status_code == 422
@@ -143,15 +142,18 @@ def test_optimize_route_geocodes_missing_coordinates(client: TestClient, admin_h
 
 
 def test_optimize_route_requires_coordinates(client: TestClient, admin_headers: dict) -> None:
+    orders = client.get("/api/pedidos?limit=100&offset=0", headers=admin_headers).json()
+    order = next(item for item in orders if item.get("endereco_entrega_id") is not None)
     response = client.post(
-        "/api/rotas",
+        "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota sem coordenadas",
             "descricao": "Deve falhar",
             "organizacao_id": 1,
             "status": "PLANEJADA",
-            "entregas": [{"entrega_id": 1, "ordem_visita": 1}],
+            "pedido_ids": [order["id"]],
+            "pontos_coleta_ids": [1],
         },
     )
     assert response.status_code == 201

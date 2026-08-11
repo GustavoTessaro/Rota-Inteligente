@@ -34,10 +34,10 @@ class MapView:
             return ft.Column(
                 [
                     ft.Text(self.title, weight=ft.FontWeight.BOLD, size=16),
-                    ft.Spacer(),
+                    ft.Container(height=16),
                     ft.Icon(ft.Icons.LOCAL_SHIPPING, size=44, color=ft.Colors.GREY_500),
                     ft.Text("Não há motoristas em atividade no momento.", color=ft.Colors.GREY_700),
-                    ft.Spacer(),
+                    ft.Container(height=16),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -49,10 +49,10 @@ class MapView:
             return ft.Column(
                 [
                     ft.Text(self.title, weight=ft.FontWeight.BOLD, size=16),
-                    ft.Spacer(),
+                    ft.Container(height=16),
                     ft.Icon(ft.Icons.LOCAL_SHIPPING, size=44, color=ft.Colors.GREY_500),
                     ft.Text("Não há motoristas em atividade no momento.", color=ft.Colors.GREY_700),
-                    ft.Spacer(),
+                    ft.Container(height=16),
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,

@@ -994,30 +994,6 @@ def list_routes(
     return db.scalars(stmt).all()
 
 
-@router.post("/rotas", response_model=RotaOut, status_code=201)
-def create_route(data: RotaCreate, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
-    ensure_route_payload_scope(user, data)
-    validate_organization(db, data.organizacao_id)
-    if data.veiculo_id is not None:
-        vehicle = get_or_404(db, Veiculo, data.veiculo_id)
-        if vehicle.organizacao_id != data.organizacao_id:
-            raise HTTPException(422, "Veículo deve pertencer à organização da rota")
-    if data.motorista_id is not None:
-        driver = validate_driver(db, data.motorista_id)
-        if driver.organizacao_id != data.organizacao_id:
-            raise HTTPException(422, "Motorista deve pertencer à organização da rota")
-    if data.origem_endereco_id is not None:
-        get_or_404(db, Endereco, data.origem_endereco_id)
-    if data.destino_endereco_id is not None:
-        get_or_404(db, Endereco, data.destino_endereco_id)
-    validate_route_delivery_entries(db, data)
-    rota = Rota(**data.model_dump(exclude={"entregas"}))
-    rota.entregas = [RotaEntrega(**entry.model_dump()) for entry in data.entregas]
-    db.add(rota)
-    commit(db)
-    return rota
-
-
 @router.get("/rotas/{rota_id}", response_model=RotaOut)
 def get_route(rota_id: int, db: Session = Depends(get_db), user: Usuario = Depends(current_user)):
     rota = get_or_404(db, Rota, rota_id)
