@@ -688,7 +688,6 @@ class DeliveryApp:
                         ),
                         trailing=ft.Row(actions, tight=True),
                     ))
-            map_control = getattr(self, "map_control", None)
             self.content.controls = [
                 self.header_bar("Rotas", f"{len(routes)} rota(s)", [
                     self.page_controls(
@@ -709,7 +708,6 @@ class DeliveryApp:
                     ft.FilledButton("Mostrar todos", on_click=lambda _: self._clear_route_selection(), visible=bool(self.selected_marker_id or self.selected_route_id)),
                 ]), padding=20),
                 ft.Container(ft.Column(rows or [ft.Text("Nenhuma rota encontrada.")]), padding=10),
-                ft.Container(map_control, padding=10) if map_control else ft.Container(),
             ]
             self.page.update()
         except ApiError as exc:
@@ -914,9 +912,14 @@ class DeliveryApp:
                         address_label = f"{address.get('logradouro', '')}, {address.get('numero', '')} - {address.get('bairro', '')}, {address.get('cidade', '')}"
             except Exception:
                 pass
+            priority_label = ""
+            priority = order.get("prioridade") or order.get("priority")
+            if priority:
+                priority_label = f" · Prioridade: {priority}"
+            status_label = f" · Status: {order.get('status') or '-'}"
             order_checkboxes.append(
                 ft.Checkbox(
-                    label=f"Pedido #{order['id']} — {order.get('numero_pedido') or '-'} — {cliente_nome} — {address_label}",
+                    label=f"Pedido #{order['id']} — {order.get('numero_pedido') or '-'} — {cliente_nome} — {address_label}{status_label}{priority_label}",
                     value=(order['id'] in selected_order_ids),
                     on_change=lambda e, order_id=order["id"]: self._toggle_delivery_order(order_id, e.control.value),
                 )
@@ -940,6 +943,7 @@ class DeliveryApp:
                 if org_id not in selected:
                     selected.append(org_id)
                     self.delivery_management_selection["pontos_coleta_ids"] = selected
+                    collection_dropdown.value = None
                 self.delivery_management_view()
 
         def remove_collection(org_id):
@@ -965,6 +969,9 @@ class DeliveryApp:
             pontos_coleta_ids = self.delivery_management_selection.get("pontos_coleta_ids") or []
             if not pedido_ids:
                 self.notify("Selecione ao menos um pedido para gerar a rota.", True)
+                return
+            if not pontos_coleta_ids:
+                self.notify("Selecione ao menos um ponto de coleta para gerar a rota.", True)
                 return
             org_id = self.user.get("organizacao_id") or (organizations[0]["id"] if organizations else None)
             if org_id is None:
@@ -1001,10 +1008,13 @@ class DeliveryApp:
             route = self.generated_route
             opt = self.generated_route_optimization or {}
             route_details = [
-                ft.Text("Resumo da rota", weight=ft.FontWeight.BOLD, size=20),
+                ft.Text(route.get("nome") or "Rota gerada", weight=ft.FontWeight.BOLD, size=20),
+                ft.Text(f"Status: {route.get('status', '-').replace('_', ' ')}"),
                 ft.Text(f"Distância estimada: {opt.get('distance_meters') or route.get('distancia_prevista') or '-'} m"),
                 ft.Text(f"Duração estimada: {opt.get('duration_seconds') or route.get('duracao_prevista') or '-'} s"),
                 ft.Text(f"Quantidade de entregas: {len(route.get('entregas') or [])}"),
+                ft.Text(f"Origem: {route.get('origem_endereco_id') or '-'}"),
+                ft.Text(f"Destino: {route.get('destino_endereco_id') or '-'}"),
                 ft.Text(f"Pontos de coleta: {', '.join(org['nome'] for org in selected_orgs) or '-'}"),
                 ft.Text(f"Motorista: {route.get('motorista_id') or '-'}"),
                 ft.Text(f"Veículo: {route.get('veiculo_id') or '-'}"),
@@ -1020,6 +1030,17 @@ class DeliveryApp:
                 ft.Text("Resumo da rota", weight=ft.FontWeight.BOLD, size=20),
                 ft.Text("Ainda não há rota gerada."),
             ]
+
+        summary_panel = ft.Column([
+            ft.Text("Resumo da seleção", weight=ft.FontWeight.BOLD, size=20),
+            ft.Text(f"Pedidos selecionados: {len(selected_orders)}"),
+            *[ft.Text(f"• Pedido #{order['id']} — {order.get('numero_pedido') or '-'}") for order in selected_orders],
+            ft.Divider(),
+            ft.Text("Pontos de coleta", weight=ft.FontWeight.BOLD),
+            *([ft.Text(f"• {org['nome']}") for org in selected_orgs] or [ft.Text("Nenhum ponto de coleta selecionado.")]),
+            ft.Divider(),
+            ft.Text("Use o formulário ao lado para gerar e atribuir rotas."),
+        ], spacing=8, tight=True)
 
         driver_options = [self.option(str(item["id"]), item["nome"]) for item in users if item.get("perfil") == "MOTORISTA" and item.get("ativo")]
         vehicle_options = [self.option(str(item["id"]), f"{item.get('placa')} · {item.get('modelo')}") for item in vehicles if item.get("ativo")]
@@ -1056,45 +1077,16 @@ class DeliveryApp:
             except ApiError as exc:
                 self.notify(str(exc), True)
 
-        route_map = None
         if self.generated_route and self.generated_route_optimization:
             markers = []
-            for waypoint in (self.generated_route_optimization or {}).get("ordered_waypoints") or []:
+            for idx, waypoint in enumerate((self.generated_route_optimization or {}).get("ordered_waypoints") or [], start=1):
                 lat = waypoint.get("lat") or waypoint.get("latitude")
                 lng = waypoint.get("lng") or waypoint.get("longitude")
                 if lat is not None and lng is not None:
-                    markers.append({"lat": lat, "lng": lng, "title": waypoint.get("label") or "Parada"})
-            route_map = MapView(markers=markers, height=300, width=500, title="Visualização da rota").build()
+                    markers.append({"id": idx, "lat": lat, "lng": lng, "title": waypoint.get("label") or f"Parada {idx}", "sequence": idx})
+            route_map = MapView(markers=markers, height=420, width=520, title="Visualização da rota").build()
         else:
-            route_map = MapView(markers=[], height=300, width=500, title="Visualização da rota").build()
-
-        summary_panel = ft.Container(
-            ft.Column([
-                ft.Text("Pedidos selecionados", weight=ft.FontWeight.BOLD, size=18),
-                ft.Text(f"{len(selected_orders)} pedido(s) selecionado(s)"),
-                *[ft.Text(f"• Pedido #{order['id']} — {order.get('numero_pedido') or '-'}") for order in selected_orders],
-                ft.Divider(),
-                ft.Text("Pontos de coleta", weight=ft.FontWeight.BOLD, size=18),
-                *([ft.Text(f"• {org['nome']}") for org in selected_orgs] or [ft.Text("Nenhum ponto de coleta selecionado.")]),
-                ft.Divider(),
-                ft.Column(route_details, tight=True, spacing=6),
-                ft.Divider(),
-                ft.Row([
-                    ft.Text("Motorista", width=200),
-                    driver_dropdown,
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ft.Row([
-                    ft.Text("Veículo", width=200),
-                    vehicle_dropdown,
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                ft.FilledButton("Atribuir Rota", on_click=assign, disabled=not self.generated_route or not driver_dropdown.value or not vehicle_dropdown.value),
-            ], spacing=10),
-            padding=18,
-            border_radius=16,
-            bgcolor=ft.Colors.WHITE,
-            shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
-            width=420,
-        )
+            route_map = MapView(markers=[], height=420, width=520, title="Visualização da rota").build()
 
         self.content.controls = [
             self.header_bar("Gestão de Entregas", "Crie rotas otimizadas a partir dos pedidos disponíveis"),
@@ -1121,9 +1113,9 @@ class DeliveryApp:
                         ft.Row([collection_dropdown, ft.FilledButton("Adicionar", on_click=add_collection)], spacing=12),
                         ft.Column(selected_collection_tiles or [ft.Text("Nenhum ponto de coleta selecionado.")], spacing=6),
                         ft.Divider(),
-                        ft.FilledButton("Gerar Rota Otimizada", icon=ft.Icons.ROUTE, on_click=generate, disabled=not bool(selected_order_ids)),
+                        ft.FilledButton("Gerar Rota Otimizada", icon=ft.Icons.ROUTE, on_click=generate, disabled=not bool(selected_order_ids and selected_collection_ids)),
                         ft.Text(
-                            "Selecione ao menos um pedido para habilitar a geração de rota." if not selected_order_ids else "",
+                            "Selecione ao menos um pedido e um ponto de coleta para habilitar a geração de rota." if not (selected_order_ids and selected_collection_ids) else "",
                             color=ft.Colors.ORANGE_700,
                         ),
                     ], spacing=12),
@@ -1249,139 +1241,11 @@ class DeliveryApp:
             if lat is not None and lng is not None:
                 markers.append({"lat": lat, "lng": lng, "title": point.get("label") or "Parada"})
         if markers:
-            try:
-                web.set_markers(markers)
-            except Exception:
-                try:
-                    web.eval_js(f"window.postMessage({json.dumps({'action': 'clear'})}, '*');")
-                    web.eval_js(f"window.postMessage({json.dumps({'action': 'markers', 'markers': markers})}, '*');")
-                except Exception:
-                    pass
+            web.set_markers(markers)
 
         if encoded:
-            try:
-                web.draw_polyline(encoded)
-            except Exception:
-                try:
-                    web.eval_js(f"window.postMessage({json.dumps({'action':'polyline','encoded':encoded})}, '*');")
-                except Exception:
-                    pass
+            web.draw_polyline(encoded)
         self.page.update()
-
-    def create_route_dialog(self):
-        try:
-            organizations = self.api.request("GET", "/organizacoes?limit=100&offset=0") if self.user["perfil"] == "ADMIN" else []
-            vehicles = self.api.request("GET", "/veiculos?limit=100&offset=0")
-            users = self.api.request("GET", "/usuarios?limit=100&offset=0")
-            deliveries = self.api.request("GET", "/entregas?limit=100&offset=0")
-        except ApiError as exc:
-            self.notify(str(exc), True)
-            return
-
-        name = ft.TextField(label="Nome da rota")
-        description = ft.TextField(label="Descrição", multiline=True)
-        organization = ft.Dropdown(
-            label="Organização",
-            value=None,
-            options=[self.option(str(item["id"]), item["nome"]) for item in organizations],
-            visible=self.user["perfil"] == "ADMIN",
-        )
-        # allow selecting an address from organization if provided
-        org_address = None
-        if organization.visible and organizations:
-            # if organization has endereco_id, fetch and display formatted address
-            for org in organizations:
-                if org.get("endereco_id"):
-                    try:
-                        addr = self.api.request("GET", f"/clientes/{org['id']}/enderecos")
-                    except ApiError:
-                        addr = []
-                    if addr:
-                        org_address = addr[0]
-                        break
-        vehicle = ft.Dropdown(
-            label="Veículo",
-            value=None,
-            options=[self.option(str(item["id"]), item["placa"]) for item in vehicles],
-        )
-        driver = ft.Dropdown(
-            label="Motorista",
-            value=None,
-            options=[self.option(str(item["id"]), item["nome"]) for item in users if item["perfil"] == "MOTORISTA" and item["ativo"]],
-        )
-        status_field = ft.Dropdown(
-            label="Status",
-            value="PLANEJADA",
-            options=[self.option(value) for value in self.route_status_options()],
-        )
-        planned_date = ft.TextField(label="Data planejada", hint_text="2026-08-07T10:30:00")
-        delivery = ft.Dropdown(
-            label="Entrega",
-            value=None,
-            options=[self.option(str(item["id"]), f'#{item["id"]} · {item["status"]}')
-                     for item in deliveries if item["status"] != "CANCELADA"],
-        )
-
-        def save(_):
-            self.clear_errors(name, description, planned_date, delivery, organization if organization.visible else ft.Row(), vehicle, driver, status_field)
-            errors = []
-            valid = self.require_text(name, "Informe o nome da rota.", 2)
-            if not valid:
-                errors.append("Nome: informe o nome da rota.")
-            if self.user["perfil"] == "ADMIN" and organization.visible and not organization.value:
-                self.set_error(organization, "Selecione a organização.")
-                errors.append("Organização: selecione a organização.")
-                valid = False
-            if not delivery.value:
-                self.set_error(delivery, "Selecione uma entrega.")
-                errors.append("Entrega: selecione uma entrega.")
-                valid = False
-            if planned_date.value.strip():
-                try:
-                    datetime.fromisoformat(planned_date.value.strip())
-                except ValueError:
-                    self.set_error(planned_date, "Informe a data no formato ISO 8601.")
-                    errors.append("Data: use o formato ISO 8601 (ex.: 2026-08-07T10:30:00).")
-                    valid = False
-            if not valid:
-                self.page.update()
-                self.notify("; ".join(errors), True)
-                return
-            payload = {
-                "nome": name.value.strip(),
-                "descricao": description.value.strip() or None,
-                "status": status_field.value,
-                "veiculo_id": int(vehicle.value) if vehicle.value else None,
-                "motorista_id": int(driver.value) if driver.value else None,
-                "entregas": [{"entrega_id": int(delivery.value), "ordem_visita": 1}],
-            }
-            if planned_date.value.strip():
-                payload["data_planejada"] = datetime.fromisoformat(planned_date.value.strip()).isoformat()
-            if self.user["perfil"] == "ADMIN":
-                if organization.value:
-                    payload["organizacao_id"] = int(organization.value)
-            else:
-                payload["organizacao_id"] = self.user.get("organizacao_id")
-            try:
-                self.api.request("POST", "/rotas", json=payload)
-                self.close_dialog(dialog)
-                self.notify("Rota criada com sucesso.")
-                self.routes_view()
-            except ApiError as exc:
-                error_message.value = str(exc)
-                self.page.update()
-                return
-
-        error_message = ft.Text("", color=ft.Colors.RED_700)
-        dialog = ft.AlertDialog(
-            title=ft.Text("Nova Rota"),
-            content=ft.Column([
-                error_message, name, description, planned_date, organization, vehicle, driver, status_field, delivery,
-            ], tight=True, width=500, height=470, scroll=ft.ScrollMode.AUTO),
-            actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
-                     ft.FilledButton("Salvar", on_click=save)],
-        )
-        self.open_dialog(dialog)
 
     def vehicles_view(self, search="", offset=0):
         page_size = 10
