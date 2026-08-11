@@ -2837,6 +2837,52 @@ class DeliveryApp:
             }
             for item in existing_items
         ]
+        addresses = []
+        selected_endereco_id = str(order["endereco_entrega_id"]) if order and order.get("endereco_entrega_id") else None
+        address_info = ft.Text("", color=ft.Colors.BLUE_700)
+
+        def on_client_change():
+            nonlocal selected_endereco_id
+            selected_endereco_id = None
+            if client.value:
+                load_addresses(int(client.value))
+            else:
+                addresses.clear()
+                refresh_address_options()
+                address_info.value = ""
+
+        def load_addresses(client_id):
+            nonlocal addresses, selected_endereco_id
+            try:
+                addresses = self.api.request("GET", f"/clientes/{client_id}/enderecos")
+            except ApiError as exc:
+                self.notify(str(exc), True)
+                addresses = []
+            if selected_endereco_id and not any(str(item["id"]) == selected_endereco_id for item in addresses):
+                selected_endereco_id = None
+            refresh_address_options()
+            if not addresses:
+                address_info.value = "Este cliente não possui endereços cadastrados. Abra o cadastro de endereços para registrar um endereço e depois selecione-o aqui."
+            else:
+                address_info.value = ""
+            self.page.update()
+
+        def refresh_address_options():
+            address.options = [
+                self.option(item["id"], f'{item["logradouro"]}, {item["numero"]} - {item["bairro"]} ({item["cidade"]}/{item["estado"]})')
+                for item in addresses
+            ]
+            address.value = selected_endereco_id if selected_endereco_id and any(str(item["id"]) == selected_endereco_id for item in addresses) else None
+            address.disabled = len(address.options) == 0
+            self.page.update()
+
+        def open_client_addresses(_=None):
+            selected_client = next((item for item in active_clients if str(item["id"]) == client.value), None)
+            if not selected_client:
+                self.notify("Selecione um cliente antes de gerenciar endereços.", True)
+                return
+            self.addresses_dialog(selected_client)
+
         def select_product(_=None):
             selected = next((item for item in active_products if str(item["id"]) == product.value), None)
             if selected:
@@ -2847,7 +2893,20 @@ class DeliveryApp:
             label="Cliente",
             value=str(order["cliente_id"]) if order else None,
             options=[self.option(item["id"], item["nome"]) for item in active_clients],
+            on_change=lambda _: on_client_change(),
         )
+        address = ft.Dropdown(
+            label="Endereço de entrega",
+            value=selected_endereco_id,
+            options=[],
+            disabled=True,
+        )
+        open_addresses_button = ft.FilledButton(
+            "Gerenciar endereços do cliente",
+            on_click=open_client_addresses,
+        )
+        if order and client.value:
+            load_addresses(int(client.value))
         product = ft.Dropdown(
             label="Produto",
             options=[self.option(item["id"], item["nome"]) for item in active_products],
@@ -2926,11 +2985,14 @@ class DeliveryApp:
         error_message = ft.Text("", color=ft.Colors.RED_700)
 
         def save(_):
-            self.clear_errors(client, priority)
+            self.clear_errors(client, address, priority)
             errors = []
             valid = True
             if not self.require_dropdown(client, "Selecione o cliente."):
                 errors.append("Cliente: selecione um cliente.")
+                valid = False
+            if not self.require_dropdown(address, "Selecione o endereço de entrega."):
+                errors.append("Endereço de entrega: selecione um endereço.")
                 valid = False
             if not self.require_dropdown(priority, "Selecione a prioridade."):
                 errors.append("Prioridade: selecione a prioridade.")
@@ -2945,6 +3007,7 @@ class DeliveryApp:
                 return
             payload = {
                 "cliente_id": int(client.value),
+                "endereco_entrega_id": int(address.value),
                 "prioridade": priority.value,
                 "forma_pagamento": payment.value.strip() or None,
                 "observacoes": notes.value.strip() or None,
@@ -2975,17 +3038,19 @@ class DeliveryApp:
             title=ft.Text("Editar pedido" if order else "Novo pedido"),
             content=ft.Column([
                 client,
+                ft.Row([address, open_addresses_button], spacing=10),
                 ft.Row([
                     product,
                     quantity,
                     price,
                     ft.FilledButton("Adicionar item", icon=ft.Icons.ADD, on_click=add_item),
                 ], wrap=True, spacing=10),
+                address_info,
                 items_column,
                 priority,
                 payment,
                 notes,
-            ], tight=True, width=520, height=520, scroll=ft.ScrollMode.AUTO),
+            ], tight=True, width=520, height=580, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
