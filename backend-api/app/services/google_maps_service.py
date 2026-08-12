@@ -19,10 +19,29 @@ class GoogleMapsService:
         self.api_key = api_key or settings.google_maps_api_key
 
     def geocode(self, address: str) -> Dict[str, Any]:
+        print(f"[DEBUG GOOGLE_MAPS] Chamando Google Geocoding API")
+        print(f"[DEBUG GOOGLE_MAPS] Address: {address}")
+        print(f"[DEBUG GOOGLE_MAPS] API Key: {'***' if self.api_key else 'NONE (não configurada!)'}")
+        
         params = {"address": address, "key": self.api_key}
-        resp = httpx.get(self.GEOCODE_URL, params=params, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        print(f"[DEBUG GOOGLE_MAPS] URL: {self.GEOCODE_URL}")
+        print(f"[DEBUG GOOGLE_MAPS] Params: address={address}, key={'***' if self.api_key else 'NONE'}")
+        
+        try:
+            resp = httpx.get(self.GEOCODE_URL, params=params, timeout=10)
+            print(f"[DEBUG GOOGLE_MAPS] Status Code: {resp.status_code}")
+            print(f"[DEBUG GOOGLE_MAPS] Headers: {dict(resp.headers)}")
+            
+            if resp.status_code != 200:
+                print(f"[DEBUG GOOGLE_MAPS] Erro HTTP: {resp.text}")
+            
+            resp.raise_for_status()
+            result = resp.json()
+            print(f"[DEBUG GOOGLE_MAPS] Response JSON: {result}")
+            return result
+        except Exception as e:
+            print(f"[DEBUG GOOGLE_MAPS] Exceção: {str(e)}")
+            raise
 
     def reverse_geocode(self, lat: float, lng: float) -> Dict[str, Any]:
         params = {"latlng": f"{lat},{lng}", "key": self.api_key}

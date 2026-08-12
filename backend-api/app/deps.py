@@ -207,24 +207,57 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
                 "error": "Endereço vazio",
             }
         
+        print(f"[DEBUG GEOCODE] Query enviada para Google Maps: {query}")
+        
         # Chamar Google Maps Geocode API
         geocoder = GoogleMapsService()
         response = geocoder.geocode(query)
         
+        print(f"[DEBUG GEOCODE] Resposta do Google Maps: {response}")
+        
         if not isinstance(response, dict):
+            print(f"[DEBUG GEOCODE] Resposta não é dict: {type(response)}")
             return {
                 "success": False,
                 "error": "Resposta inválida da API de geocodificação",
             }
         
+        # Verificar status da API
+        api_status = response.get("status")
+        print(f"[DEBUG GEOCODE] Status da API: {api_status}")
+        
+        if api_status != "OK":
+            error_message = f"API Status: {api_status}"
+            if api_status == "ZERO_RESULTS":
+                error_message = "Endereço não encontrado pelo Google Maps"
+            elif api_status == "INVALID_REQUEST":
+                error_message = "Requisição inválida para o Google Maps"
+            elif api_status == "REQUEST_DENIED":
+                error_message = "Requisição negada (possível problema com API key)"
+            elif api_status == "OVER_QUERY_LIMIT":
+                error_message = "Limite de requisições excedido"
+            elif api_status == "UNKNOWN_ERROR":
+                error_message = "Erro desconhecido no servidor do Google Maps"
+            
+            print(f"[DEBUG GEOCODE] Erro: {error_message}")
+            return {
+                "success": False,
+                "error": error_message,
+            }
+        
         results = response.get("results", [])
         if not results:
+            print(f"[DEBUG GEOCODE] Nenhum resultado encontrado (results vazio)")
             return {
                 "success": False,
                 "error": "Endereço não encontrado",
             }
         
+        print(f"[DEBUG GEOCODE] Encontrado {len(results)} resultado(s)")
+        
         first_result = results[0]
+        print(f"[DEBUG GEOCODE] Primeiro resultado: {first_result}")
+        
         geometry = first_result.get("geometry", {})
         location = geometry.get("location", {})
         
@@ -233,7 +266,10 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
         formatted = first_result.get("formatted_address")
         place_id = first_result.get("place_id")
         
+        print(f"[DEBUG GEOCODE] Coordinates: lat={lat}, lng={lng}, formatted={formatted}, place_id={place_id}")
+        
         if lat is None or lng is None:
+            print(f"[DEBUG GEOCODE] Coordenadas inválidas")
             return {
                 "success": False,
                 "error": "Coordenadas não encontradas",
@@ -245,6 +281,8 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
         endereco.endereco_formatado = formatted
         endereco.place_id = place_id
         
+        print(f"[DEBUG GEOCODE] Endereço geocodificado com sucesso!")
+        
         return {
             "success": True,
             "endereco_formatado": formatted,
@@ -254,6 +292,9 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
         }
         
     except Exception as exc:
+        print(f"[DEBUG GEOCODE] Exceção: {str(exc)}")
+        import traceback
+        traceback.print_exc()
         return {
             "success": False,
             "error": f"Erro ao geocodificar: {str(exc)}",
