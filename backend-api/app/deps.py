@@ -22,8 +22,10 @@ from .models import (
     StatusRota,
     Usuario,
     Veiculo,
+    Endereco,
 )
 from .security import require_roles
+from .services.google_maps_service import GoogleMapsService
 
 admin = require_roles(Perfil.ADMIN)
 staff = require_roles(Perfil.ADMIN, Perfil.GESTOR)
@@ -159,3 +161,100 @@ def validate_route_delivery_entries(db: Session, route_data):
         entrega = get_or_404(db, Entrega, entry.entrega_id)
         if entrega.status == StatusEntrega.CANCELADA:
             raise HTTPException(422, "Entrega cancelada não pode fazer parte da rota")
+
+
+def geocode_address(db: Session, endereco: Endereco) -> dict:
+    """
+    Geocodifica um endereço usando Google Maps.
+    
+    Atualiza os campos:
+    - latitude
+    - longitude
+    - endereco_formatado
+    - place_id
+    
+    Args:
+        db: Sessão do banco
+        endereco: Objeto Endereco a geocodificar
+        
+    Returns:
+        Dicionário com resultado:
+        {
+            "success": bool,
+            "endereco_formatado": str | None,
+            "latitude": float | None,
+            "longitude": float | None,
+            "place_id": str | None,
+            "error": str | None,
+        }
+    """
+    try:
+        # Construir query de endereço
+        parts = [
+            endereco.logradouro,
+            endereco.numero,
+            endereco.complemento if endereco.complemento else None,
+            endereco.bairro,
+            endereco.cidade,
+            endereco.estado,
+            endereco.cep,
+        ]
+        query = ", ".join(str(p) for p in parts if p)
+        
+        if not query.strip():
+            return {
+                "success": False,
+                "error": "Endereço vazio",
+            }
+        
+        # Chamar Google Maps Geocode API
+        geocoder = GoogleMapsService()
+        response = geocoder.geocode(query)
+        
+        if not isinstance(response, dict):
+            return {
+                "success": False,
+                "error": "Resposta inválida da API de geocodificação",
+            }
+        
+        results = response.get("results", [])
+        if not results:
+            return {
+                "success": False,
+                "error": "Endereço não encontrado",
+            }
+        
+        first_result = results[0]
+        geometry = first_result.get("geometry", {})
+        location = geometry.get("location", {})
+        
+        lat = location.get("lat")
+        lng = location.get("lng")
+        formatted = first_result.get("formatted_address")
+        place_id = first_result.get("place_id")
+        
+        if lat is None or lng is None:
+            return {
+                "success": False,
+                "error": "Coordenadas não encontradas",
+            }
+        
+        # Atualizar o objeto
+        endereco.latitude = Decimal(str(lat))
+        endereco.longitude = Decimal(str(lng))
+        endereco.endereco_formatado = formatted
+        endereco.place_id = place_id
+        
+        return {
+            "success": True,
+            "endereco_formatado": formatted,
+            "latitude": float(lat),
+            "longitude": float(lng),
+            "place_id": place_id,
+        }
+        
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"Erro ao geocodificar: {str(exc)}",
+        }

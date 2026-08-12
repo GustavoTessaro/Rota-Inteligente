@@ -1,13 +1,37 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import admin, commit, get_or_404, staff
+from ..deps import admin, commit, get_or_404, staff, geocode_address
 from ..models import Cliente, Endereco, Entrega, Pedido, Usuario
-from ..schemas import ClienteCreate, ClienteOut, EnderecoCreate, EnderecoOut, StatusIn
+from ..schemas import ClienteCreate, ClienteOut, EnderecoCreate, EnderecoOut, StatusIn, GeocodeResultIn
+from ..services.cep_service import get_cep_service
 
 router = APIRouter(prefix="/clientes")
+
+
+class CEPLookupResponse(BaseModel):
+    success: bool
+    logradouro: str | None = None
+    bairro: str | None = None
+    cidade: str | None = None
+    estado: str | None = None
+    complemento: str | None = None
+    error: str | None = None
+
+
+class GeocodeAddressRequest(BaseModel):
+    """Requisição para geocodificar um endereço."""
+    logradouro: str
+    numero: str
+    complemento: str | None = None
+    bairro: str
+    cidade: str
+    estado: str
+    cep: str
+
 
 
 @router.get("", response_model=list[ClienteOut])
@@ -75,8 +99,18 @@ def list_addresses(client_id: int, db: Session = Depends(get_db), _: Usuario = D
 def create_address(
     client_id: int, data: EnderecoCreate, db: Session = Depends(get_db), _: Usuario = Depends(staff)
 ):
+    """Cria novo endereço com geocodificação obrigatória.
+    
+    Se o endereço não puder ser geocodificado, retorna erro 422.
+    """
     get_or_404(db, Cliente, client_id)
     address = Endereco(cliente_id=client_id, **data.model_dump())
+    
+    # Geocodificar endereço antes de salvar
+    result = geocode_address(db, address)
+    if not result["success"]:
+        raise HTTPException(422, f"Falha ao geocodificar: {result.get('error', 'Erro desconhecido')}")
+    
     db.add(address)
     commit(db)
     return address
@@ -87,11 +121,23 @@ def update_address(
     client_id: int, address_id: int, data: EnderecoCreate,
     db: Session = Depends(get_db), _: Usuario = Depends(staff)
 ):
+    """Atualiza endereço existente com geocodificação.
+    
+    Se o endereço não puder ser geocodificado, retorna erro 422.
+    """
     address = get_or_404(db, Endereco, address_id)
     if address.cliente_id != client_id:
         raise HTTPException(404, "Registro não encontrado")
+    
+    # Atualizar campos do endereço
     for key, value in data.model_dump().items():
         setattr(address, key, value)
+    
+    # Geocodificar endereço antes de salvar
+    result = geocode_address(db, address)
+    if not result["success"]:
+        raise HTTPException(422, f"Falha ao geocodificar: {result.get('error', 'Erro desconhecido')}")
+    
     commit(db)
     return address
 
@@ -112,3 +158,48 @@ def delete_address(
         raise HTTPException(409, "Endereço está em uso e não pode ser excluído")
     db.delete(address)
     commit(db)
+
+
+@router.get("/{client_id}/enderecos/lookup-cep/{cep}", response_model=CEPLookupResponse)
+def lookup_cep(
+    client_id: int, cep: str, db: Session = Depends(get_db), _: Usuario = Depends(staff)
+):
+    """Consulta dados de CEP usando viaCEP API.
+    
+    Retorna endereço pré-preenchido (logradouro, bairro, cidade, estado) 
+    para que o usuário complete com número e complemento.
+    """
+    get_or_404(db, Cliente, client_id)
+    service = get_cep_service()
+    return service.lookup(cep)
+
+
+@router.post("/{client_id}/enderecos/geocodificar", response_model=GeocodeResultIn)
+def geocodify_address(
+    client_id: int,
+    data: GeocodeAddressRequest,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(staff)
+):
+    """Geocodifica um endereço para obter coordenadas antes de salvar.
+    
+    O frontend deve chamar este endpoint para validar o endereço e mostrar
+    ao usuário o que será salvo (endereço formatado, coordenadas, etc).
+    """
+    get_or_404(db, Cliente, client_id)
+    
+    # Criar endereço temporário para geocodificar
+    temp_endereco = Endereco(
+        cliente_id=client_id,
+        logradouro=data.logradouro,
+        numero=data.numero,
+        complemento=data.complemento,
+        bairro=data.bairro,
+        cidade=data.cidade,
+        estado=data.estado.upper(),
+        cep=data.cep,
+    )
+    
+    # Geocodificar
+    result = geocode_address(db, temp_endereco)
+    return result

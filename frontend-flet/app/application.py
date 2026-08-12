@@ -2066,7 +2066,14 @@ class DeliveryApp:
         )
         self.open_dialog(dialog)
 
-    def addresses_dialog(self, client):
+    def addresses_dialog(self, client, on_return=None):
+        """
+        Diálogo de gerenciamento de endereços do cliente.
+        
+        Args:
+            client: Dicionário do cliente
+            on_return: Callback chamado ao fechar (não fecha pedido/pai)
+        """
         try:
             addresses = self.api.request("GET", f'/clientes/{client["id"]}/enderecos')
         except ApiError as exc:
@@ -2075,84 +2082,214 @@ class DeliveryApp:
 
         rows = []
         for item in addresses:
+            # Mostrar endereço formatado sem o campo tipo
             rows.append(ft.ListTile(
                 leading=ft.Icon(ft.Icons.HOME),
                 title=ft.Text(f'{item["logradouro"]}, {item["numero"]}'),
-                subtitle=ft.Text(f'{item["bairro"]} · {item["cidade"]}/{item["estado"]} · {item["tipo"]}'),
+                subtitle=ft.Text(f'{item["bairro"]} · {item["cidade"]}/{item["estado"]}'),
                 trailing=ft.Row([
                     ft.IconButton(
                         ft.Icons.EDIT,
                         tooltip="Editar endereço",
-                        on_click=lambda _, address=item: self.address_dialog(client, dialog, address),
+                        on_click=lambda _, address=item: self.address_dialog(client, dialog, on_return, address),
                     ),
                     ft.IconButton(
                         ft.Icons.DELETE,
                         tooltip="Excluir endereço",
                         icon_color=ft.Colors.RED_700,
-                        on_click=lambda _, address=item: self.confirm_delete_address(client, address, dialog),
+                        on_click=lambda _, address=item: self.confirm_delete_address(client, address, dialog, on_return),
                     ),
                 ], tight=True),
             ))
+
+        def on_close(_):
+            self.close_dialog(dialog)
+            if on_return:
+                on_return()
 
         dialog = ft.AlertDialog(
             title=ft.Text(f'Endereços - {client["nome"]}'),
             content=ft.Column(rows or [ft.Text("Nenhum endereço cadastrado.")], tight=True, width=520),
             actions=[
-                ft.TextButton("Fechar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.TextButton("Fechar", on_click=on_close),
                 ft.FilledButton("Novo endereço", icon=ft.Icons.ADD,
-                                on_click=lambda _: self.address_dialog(client, dialog)),
+                                on_click=lambda _: self.address_dialog(client, dialog, on_return)),
             ],
         )
         self.open_dialog(dialog)
 
-    def address_dialog(self, client, parent_dialog=None, address=None):
+    def address_dialog(self, client, parent_dialog=None, on_return=None, address=None):
+        """Novo diálogo de endereço com CEP → geocodificação → confirmação.
+        
+        Fluxo:
+        1. CEP informado
+        2. Consulta viaCEP para auto-preenchimento
+        3. Usuário informa número/complemento
+        4. Sistema geocodifica com Google Maps
+        5. Usuário confirma endereço encontrado
+        6. Salva com latitude/longitude
+        """
         error_message = ft.Text("", color=ft.Colors.RED_700)
-        street = ft.TextField(label="Logradouro", value=(address or {}).get("logradouro", ""))
-        number = ft.TextField(label="Número", value=(address or {}).get("numero", ""))
-        complement = ft.TextField(label="Complemento", value=(address or {}).get("complemento") or "")
-        district = ft.TextField(label="Bairro", value=(address or {}).get("bairro", ""))
-        city = ft.TextField(label="Cidade", value=(address or {}).get("cidade", ""))
-        state = ft.TextField(label="UF", value=(address or {}).get("estado", "SP"))
-        zip_code = ft.TextField(label="CEP", value=(address or {}).get("cep", ""))
-        kind = ft.Dropdown(
-            label="Tipo",
-            value=(address or {}).get("tipo", "DESTINO"),
-            options=[self.option(value) for value in ["ORIGEM", "DESTINO", "OUTRO"]],
+        info_message = ft.Text("", color=ft.Colors.BLUE_700)
+        
+        # Campos em ordem: CEP, logradouro, número, complemento, bairro, cidade, UF
+        zip_code = ft.TextField(
+            label="CEP",
+            value=(address or {}).get("cep", ""),
+            helper_text="Informe para auto-preenchimento",
+            on_change=lambda _: self.clear_errors(zip_code),
         )
+        street = ft.TextField(
+            label="Logradouro",
+            value=(address or {}).get("logradouro", ""),
+            read_only=(address is not None),  # Apenas leitura se editando
+        )
+        number = ft.TextField(
+            label="Número",
+            value=(address or {}).get("numero", ""),
+        )
+        complement = ft.TextField(
+            label="Complemento",
+            value=(address or {}).get("complemento") or "",
+        )
+        district = ft.TextField(
+            label="Bairro",
+            value=(address or {}).get("bairro", ""),
+            read_only=(address is not None),
+        )
+        city = ft.TextField(
+            label="Cidade",
+            value=(address or {}).get("cidade", ""),
+            read_only=(address is not None),
+        )
+        state = ft.TextField(
+            label="UF",
+            value=(address or {}).get("estado", "SC"),
+            read_only=(address is not None),
+        )
+        
+        # Campo de confirmação do endereço geocodificado
+        geocoded_address_text = ft.Text("", color=ft.Colors.GREEN_700, size=12)
+        geocoded_coords = ft.Text("", color=ft.Colors.GREEN_700, size=10)
 
-        def save(_):
-            self.clear_errors(street, number, district, city, state, zip_code, kind)
+        def lookup_cep_auto(_=None):
+            """Consulta CEP ao perder foco."""
+            cep_value = self.only_digits(zip_code.value)
+            if len(cep_value) != 8:
+                return
+            
+            if address is not None:  # Se editando, não faz lookup
+                return
+            
+            self.clear_errors(zip_code, street, district, city, state)
+            info_message.value = "Consultando CEP..."
+            self.page.update()
+            
+            try:
+                result = self.api.request("GET", f'/clientes/{client["id"]}/enderecos/lookup-cep/{cep_value}')
+                if result.get("success"):
+                    street.value = result.get("logradouro", "")
+                    district.value = result.get("bairro", "")
+                    city.value = result.get("cidade", "")
+                    state.value = result.get("estado", "").upper()
+                    if result.get("complemento"):
+                        complement.value = result.get("complemento")
+                    info_message.value = "CEP preenchido com sucesso!"
+                else:
+                    self.set_error(zip_code, result.get("error", "CEP não encontrado"))
+                    info_message.value = ""
+            except ApiError as exc:
+                self.set_error(zip_code, str(exc))
+                info_message.value = ""
+            
+            self.page.update()
+
+        def geocodify(_=None):
+            """Geocodifica o endereço completo."""
+            self.clear_errors(number, street, district, city, state, zip_code)
             errors = []
             valid = True
-            if not self.require_text(street, "Informe pelo menos 2 caracteres.", 2):
+            
+            if not self.require_text(street, "Informe o logradouro.", 2):
                 errors.append("Logradouro: informe pelo menos 2 caracteres.")
                 valid = False
             if not self.require_text(number, "Informe o número.", 1):
                 errors.append("Número: informe o número.")
                 valid = False
-            if not self.require_text(district, "Informe pelo menos 2 caracteres.", 2):
+            if not self.require_text(district, "Informe o bairro.", 2):
                 errors.append("Bairro: informe pelo menos 2 caracteres.")
                 valid = False
-            if not self.require_text(city, "Informe pelo menos 2 caracteres.", 2):
+            if not self.require_text(city, "Informe a cidade.", 2):
                 errors.append("Cidade: informe pelo menos 2 caracteres.")
                 valid = False
-            if not self.require_text(state, "Informe a UF com 2 letras.", 2):
+            if not self.require_text(state, "Informe a UF.", 2):
                 errors.append("UF: informe a UF com 2 letras.")
                 valid = False
-            if not self.require_dropdown(kind, "Selecione o tipo."):
-                errors.append("Tipo: selecione o tipo do endereço.")
-                valid = False
             if len((state.value or "").strip()) != 2:
-                self.set_error(state, "Informe a UF com 2 letras.")
+                self.set_error(state, "Informe com 2 letras.")
                 valid = False
             if len(self.only_digits(zip_code.value)) != 8:
-                self.set_error(zip_code, "Informe o CEP com 8 dígitos.")
-                errors.append("CEP: informe o CEP com 8 dígitos.")
+                self.set_error(zip_code, "Informe 8 dígitos.")
+                errors.append("CEP: informe 8 dígitos.")
                 valid = False
+            
             if not valid:
                 error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
+                geocoded_address_text.value = ""
+                geocoded_coords.value = ""
                 self.page.update()
                 return
+            
+            error_message.value = ""
+            info_message.value = "Localizando endereço..."
+            geocoded_address_text.value = ""
+            geocoded_coords.value = ""
+            self.page.update()
+            
+            try:
+                payload = {
+                    "logradouro": street.value.strip(),
+                    "numero": number.value.strip(),
+                    "complemento": complement.value.strip() or None,
+                    "bairro": district.value.strip(),
+                    "cidade": city.value.strip(),
+                    "estado": state.value.strip().upper(),
+                    "cep": self.only_digits(zip_code.value),
+                }
+                result = self.api.request(
+                    "POST",
+                    f'/clientes/{client["id"]}/enderecos/geocodificar',
+                    json=payload
+                )
+                
+                if result.get("success"):
+                    # Mostrar endereço geocodificado
+                    geocoded_address_text.value = result.get("endereco_formatado") or "Endereço não formatado"
+                    lat = result.get("latitude")
+                    lng = result.get("longitude")
+                    if lat and lng:
+                        geocoded_coords.value = f"Coordenadas: {lat:.4f}, {lng:.4f}"
+                    info_message.value = "✓ Endereço localizado! Clique em Salvar para confirmar."
+                else:
+                    error_message.value = result.get("error", "Não foi possível localizar o endereço")
+                    geocoded_address_text.value = ""
+                    geocoded_coords.value = ""
+                    info_message.value = ""
+            except ApiError as exc:
+                error_message.value = str(exc)
+                geocoded_address_text.value = ""
+                geocoded_coords.value = ""
+                info_message.value = ""
+            
+            self.page.update()
+
+        def save(_):
+            """Salva o endereço após confirmação."""
+            if not geocoded_address_text.value:
+                error_message.value = "Você deve geocodificar o endereço primeiro. Clique em 'Localizar endereço'."
+                self.page.update()
+                return
+            
             payload = {
                 "logradouro": street.value.strip(),
                 "numero": number.value.strip(),
@@ -2161,8 +2298,9 @@ class DeliveryApp:
                 "cidade": city.value.strip(),
                 "estado": state.value.strip().upper(),
                 "cep": self.only_digits(zip_code.value),
-                "tipo": kind.value,
+                "tipo": "OUTRO",  # Campo tipo não mais editável, sempre "OUTRO"
             }
+            
             try:
                 if address:
                     self.api.request(
@@ -2174,32 +2312,73 @@ class DeliveryApp:
                 else:
                     self.api.request("POST", f'/clientes/{client["id"]}/enderecos', json=payload)
                     message = "Endereço cadastrado."
+                
                 self.close_dialog(dialog)
-                if parent_dialog:
-                    self.close_dialog(parent_dialog)
                 self.notify(message)
-                self.addresses_dialog(client)
+                
+                # Callback para retornar ao pedido/pai sem fechar
+                if on_return:
+                    on_return()
+                    self.page.update()
+                # Se não há callback, atualiza apenas addresses_dialog
+                elif parent_dialog:
+                    self.addresses_dialog(client, on_return)
+                else:
+                    self.addresses_dialog(client)
+                    
             except ApiError as exc:
                 error_message.value = str(exc)
                 self.page.update()
                 return
 
+        # Observação: se editando endereço existente, não geocodifica novamente
+        if address is not None:
+            geocoded_address_text.value = address.get("endereco_formatado") or f"{address.get('logradouro')}, {address.get('numero')}"
+            if address.get("latitude") and address.get("longitude"):
+                geocoded_coords.value = f"Coordenadas: {float(address['latitude']):.4f}, {float(address['longitude']):.4f}"
+
         dialog = ft.AlertDialog(
             title=ft.Text("Editar endereço" if address else "Novo endereço"),
-            content=ft.Column([error_message, street, number, complement, district, city, state, zip_code, kind], tight=True, width=420, height=460, scroll=ft.ScrollMode.AUTO),
-            actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
-                     ft.FilledButton("Salvar", on_click=save)],
+            content=ft.Column([
+                error_message,
+                info_message,
+                ft.Divider(height=10),
+                zip_code,
+                street,
+                number,
+                complement,
+                district,
+                city,
+                state,
+                ft.Divider(height=10),
+                ft.Text("Endereço encontrado:", weight=ft.FontWeight.BOLD, size=12),
+                geocoded_address_text,
+                geocoded_coords,
+            ], tight=True, width=480, height=600, scroll=ft.ScrollMode.AUTO),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.TextButton("Localizar endereço", on_click=geocodify, icon=ft.Icons.LOCATION_ON) if not address else None,
+                ft.FilledButton("Salvar", on_click=save),
+            ],
         )
+        
+        # Se não estiver editando, configurar on_blur no CEP
+        if address is None:
+            zip_code.on_blur = lookup_cep_auto
+        
         self.open_dialog(dialog)
 
-    def confirm_delete_address(self, client, address, parent_dialog):
+    def confirm_delete_address(self, client, address, parent_dialog, on_return=None):
         def delete(_):
             try:
                 self.api.request("DELETE", f'/clientes/{client["id"]}/enderecos/{address["id"]}')
                 dialog.open = False
                 parent_dialog.open = False
                 self.notify("Endereço excluído.")
-                self.addresses_dialog(client)
+                if on_return:
+                    on_return()
+                else:
+                    self.addresses_dialog(client)
             except ApiError as exc:
                 self.page.update()
                 self.notify(str(exc), True)
@@ -2881,7 +3060,14 @@ class DeliveryApp:
             if not selected_client:
                 self.notify("Selecione um cliente antes de gerenciar endereços.", True)
                 return
-            self.addresses_dialog(selected_client)
+            
+            def on_return_from_addresses():
+                """Recarrega endereços ao voltar do diálogo de endereços."""
+                if client.value:
+                    load_addresses(int(client.value))
+            
+            # Passar dialog do pedido como parent_dialog + callback de retorno
+            self.addresses_dialog(selected_client, on_return=on_return_from_addresses)
 
         def select_product(_=None):
             selected = next((item for item in active_products if str(item["id"]) == product.value), None)

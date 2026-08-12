@@ -12,6 +12,16 @@ class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class GeocodeResultIn(BaseModel):
+    """Resultado da geocodificação de um endereço."""
+    success: bool
+    endereco_formatado: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    place_id: str | None = None
+    error: str | None = None
+
+
 class LoginIn(BaseModel):
     email: EmailStr
     senha: str
