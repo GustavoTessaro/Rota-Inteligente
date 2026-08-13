@@ -2192,8 +2192,7 @@ class DeliveryApp:
                     district.value = result.get("bairro", "")
                     city.value = result.get("cidade", "")
                     state.value = result.get("estado", "").upper()
-                    if result.get("complemento"):
-                        complement.value = result.get("complemento")
+                    # Não preencher automaticamente o campo 'complemento' vindo do ViaCEP
                     info_message.value = "CEP preenchido com sucesso!"
                 else:
                     self.set_error(zip_code, result.get("error", "CEP não encontrado"))

@@ -123,3 +123,66 @@ class GoogleMapsService:
 
 def get_google_maps_service() -> GoogleMapsService:
     return GoogleMapsService()
+
+
+class NominatimService:
+    """Simple Nominatim (OpenStreetMap) geocoding service wrapper.
+
+    Provides a `geocode(address)` method that returns a dict compatible
+    with the shape expected by `geocode_address()` in `deps.py`.
+    """
+    SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+
+    def __init__(self, email: Optional[str] = None):
+        self.email = email or settings.nominatim_email
+
+    def geocode(self, address: str) -> Dict[str, Any]:
+        # Nominatim requires a proper User-Agent and (optionally) an email
+        headers = {"User-Agent": "Rota-Inteligente/1.0"}
+        params = {
+            "q": address,
+            "format": "json",
+            "addressdetails": 1,
+            "limit": 3,
+        }
+        if self.email:
+            params["email"] = self.email
+
+        print(f"[DEBUG NOMINATIM] Chamando Nominatim: {self.SEARCH_URL} with q={address}")
+        resp = httpx.get(self.SEARCH_URL, params=params, headers=headers, timeout=10)
+        resp.raise_for_status()
+        items = resp.json()
+        print(f"[DEBUG NOMINATIM] Response JSON: {items}")
+
+        if not isinstance(items, list) or len(items) == 0:
+            return {"results": [], "status": "ZERO_RESULTS"}
+
+        results: List[Dict[str, Any]] = []
+        for item in items:
+            try:
+                lat = float(item.get("lat"))
+                lon = float(item.get("lon"))
+            except Exception:
+                continue
+            formatted = item.get("display_name")
+            osm_id = item.get("osm_id")
+            osm_type = item.get("osm_type")
+            place_id = f"nominatim:{osm_type}:{osm_id}" if osm_id and osm_type else None
+            result = {
+                "geometry": {"location": {"lat": lat, "lng": lon}},
+                "formatted_address": formatted,
+                "place_id": place_id,
+                # keep raw item for debugging
+                "raw": item,
+            }
+            results.append(result)
+
+        return {"results": results, "status": "OK"}
+
+
+def get_geocoding_service() -> Any:
+    provider = (settings.geocoding_provider or "nominatim").lower()
+    if provider == "google":
+        return GoogleMapsService()
+    # default to nominatim
+    return NominatimService()

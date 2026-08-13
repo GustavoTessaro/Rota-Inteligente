@@ -25,7 +25,7 @@ from .models import (
     Endereco,
 )
 from .security import require_roles
-from .services.google_maps_service import GoogleMapsService
+from .services.google_maps_service import get_geocoding_service
 
 admin = require_roles(Perfil.ADMIN)
 staff = require_roles(Perfil.ADMIN, Perfil.GESTOR)
@@ -200,6 +200,9 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
             endereco.cep,
         ]
         query = ", ".join(str(p) for p in parts if p)
+        # Garantir especificação de país para melhorar resultados locais
+        if "brasil" not in query.lower() and "brazil" not in query.lower():
+            query = f"{query}, Brasil"
         
         if not query.strip():
             return {
@@ -207,13 +210,13 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
                 "error": "Endereço vazio",
             }
         
-        print(f"[DEBUG GEOCODE] Query enviada para Google Maps: {query}")
-        
-        # Chamar Google Maps Geocode API
-        geocoder = GoogleMapsService()
+        print(f"[DEBUG GEOCODE] Query enviada para Geocoding provider: {query}")
+
+        # Chamar provedor de geocodificação configurado (Google ou Nominatim)
+        geocoder = get_geocoding_service()
         response = geocoder.geocode(query)
-        
-        print(f"[DEBUG GEOCODE] Resposta do Google Maps: {response}")
+
+        print(f"[DEBUG GEOCODE] Resposta do provedor: {response}")
         
         if not isinstance(response, dict):
             print(f"[DEBUG GEOCODE] Resposta não é dict: {type(response)}")
@@ -227,18 +230,23 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
         print(f"[DEBUG GEOCODE] Status da API: {api_status}")
         
         if api_status != "OK":
-            error_message = f"API Status: {api_status}"
-            if api_status == "ZERO_RESULTS":
-                error_message = "Endereço não encontrado pelo Google Maps"
-            elif api_status == "INVALID_REQUEST":
-                error_message = "Requisição inválida para o Google Maps"
-            elif api_status == "REQUEST_DENIED":
-                error_message = "Requisição negada (possível problema com API key)"
-            elif api_status == "OVER_QUERY_LIMIT":
-                error_message = "Limite de requisições excedido"
-            elif api_status == "UNKNOWN_ERROR":
-                error_message = "Erro desconhecido no servidor do Google Maps"
-            
+            # Priorizar mensagem de erro detalhada vinda da API, se disponível
+            provider_message = response.get("error_message")
+            if provider_message:
+                error_message = f"Google API: {provider_message}"
+            else:
+                error_message = f"API Status: {api_status}"
+                if api_status == "ZERO_RESULTS":
+                    error_message = "Endereço não encontrado pelo Google Maps"
+                elif api_status == "INVALID_REQUEST":
+                    error_message = "Requisição inválida para o Google Maps"
+                elif api_status == "REQUEST_DENIED":
+                    error_message = "Requisição negada (possível problema com API key)"
+                elif api_status == "OVER_QUERY_LIMIT":
+                    error_message = "Limite de requisições excedido"
+                elif api_status == "UNKNOWN_ERROR":
+                    error_message = "Erro desconhecido no servidor do Google Maps"
+
             print(f"[DEBUG GEOCODE] Erro: {error_message}")
             return {
                 "success": False,
