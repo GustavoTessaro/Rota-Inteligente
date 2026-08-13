@@ -230,22 +230,22 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
         print(f"[DEBUG GEOCODE] Status da API: {api_status}")
         
         if api_status != "OK":
-            # Priorizar mensagem de erro detalhada vinda da API, se disponível
+            provider_name = (getattr(__import__('app.config', fromlist=['settings']).settings, 'geocoding_provider', 'nominatim') or 'nominatim').upper()
             provider_message = response.get("error_message")
             if provider_message:
-                error_message = f"Google API: {provider_message}"
+                error_message = f"Provider {provider_name}: {provider_message}"
             else:
                 error_message = f"API Status: {api_status}"
                 if api_status == "ZERO_RESULTS":
-                    error_message = "Endereço não encontrado pelo Google Maps"
+                    error_message = f"Endereço não encontrado pelo provedor de geocodificação ({provider_name})"
                 elif api_status == "INVALID_REQUEST":
-                    error_message = "Requisição inválida para o Google Maps"
+                    error_message = f"Requisição inválida para o provedor de geocodificação ({provider_name})"
                 elif api_status == "REQUEST_DENIED":
-                    error_message = "Requisição negada (possível problema com API key)"
+                    error_message = f"Requisição negada pelo provedor de geocodificação ({provider_name})"
                 elif api_status == "OVER_QUERY_LIMIT":
-                    error_message = "Limite de requisições excedido"
+                    error_message = f"Limite de requisições excedido no provedor ({provider_name})"
                 elif api_status == "UNKNOWN_ERROR":
-                    error_message = "Erro desconhecido no servidor do Google Maps"
+                    error_message = f"Erro desconhecido no provedor de geocodificação ({provider_name})"
 
             print(f"[DEBUG GEOCODE] Erro: {error_message}")
             return {

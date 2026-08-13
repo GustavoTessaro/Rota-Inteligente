@@ -43,6 +43,41 @@ def _create_route_with_delivery(client: TestClient, admin_headers: dict) -> dict
     return response.json()
 
 
+def test_generate_route_optimizes_and_persists_metrics(client: TestClient, admin_headers: dict) -> None:
+    route = _create_route_with_delivery(client, admin_headers)
+
+    with patch("app.routers.rotas.RouteOptimizationService.optimize_route", return_value={
+        "optimized_order": [0],
+        "ordered_waypoints": [{"lat": -23.550520, "lng": -46.633308, "label": "Parada 1"}],
+        "distance_meters": 1200,
+        "duration_seconds": 240,
+        "encoded_polyline": "abc123",
+        "google_route_id": "route-123",
+        "google_optimization_request_id": "opt-123",
+    }):
+        response = client.post(
+            "/api/rotas/gerar",
+            headers=admin_headers,
+            json={
+                "nome": "Rota gerada e otimizada",
+                "descricao": "Deve otimizar ao gerar",
+                "organizacao_id": route["organizacao_id"],
+                "veiculo_id": route["veiculo_id"],
+                "motorista_id": route["motorista_id"],
+                "status": "OTIMIZANDO",
+                "pedido_ids": [route["entregas"][0]["entrega_id"] if "entrega_id" in route["entregas"][0] else route["entregas"][0]["id"]],
+                "pontos_coleta_ids": [route["organizacao_id"]],
+            },
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["status"] == "PRONTA"
+    assert Decimal(str(data["distancia_prevista"])) == Decimal("1.20")
+    assert Decimal(str(data["duracao_prevista"])) == Decimal("4.00")
+    assert data["route_geometry"] == "abc123"
+
+
 def test_optimize_route_requires_existing_route(client: TestClient, admin_headers: dict) -> None:
     response = client.post("/api/rotas/99999/otimizar", headers=admin_headers)
     assert response.status_code == 404
@@ -121,9 +156,13 @@ def test_optimize_route_geocodes_missing_coordinates(client: TestClient, admin_h
                 address.longitude = None
                 db.commit()
 
-    with patch("app.routers.rotas.GoogleMapsService.geocode", return_value={
-        "results": [{"geometry": {"location": {"lat": -23.550520, "lng": -46.633308}}}]
-    }) as geocode_mock, patch("app.routers.rotas.RouteOptimizationService.optimize_route", return_value={
+    fake_service = type(
+        "FakeService",
+        (),
+        {"geocode": lambda self, query: {"results": [{"geometry": {"location": {"lat": -23.550520, "lng": -46.633308}}}]}}
+    )
+
+    with patch("app.routers.rotas.get_geocoding_service", return_value=fake_service()) as geocode_mock, patch("app.routers.rotas.RouteOptimizationService.optimize_route", return_value={
         "optimized_order": [0],
         "ordered_waypoints": [{"lat": -23.550520, "lng": -46.633308, "label": "Parada 1"}],
         "distance_meters": 1000,
@@ -156,7 +195,5 @@ def test_optimize_route_requires_coordinates(client: TestClient, admin_headers: 
             "pontos_coleta_ids": [1],
         },
     )
-    assert response.status_code == 201
-
-    optimize = client.post(f"/api/rotas/{response.json()['id']}/otimizar", headers=admin_headers)
-    assert optimize.status_code == 422
+    assert response.status_code == 422
+    assert "coordenada" in response.json()["detail"].lower()
