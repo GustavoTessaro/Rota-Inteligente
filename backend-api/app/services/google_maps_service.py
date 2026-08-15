@@ -1,8 +1,79 @@
+import math
 from typing import Any, Dict, List, Optional
 import httpx
 
 from ..config import settings
 from .google_route_optimization_service import GoogleRouteOptimizationService
+
+
+def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(delta_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(a))
+
+
+def _encode_polyline(points: List[Dict[str, float]]) -> str:
+    if not points:
+        return ""
+
+    def encode(value: float) -> str:
+        scaled = int(round(value * 1_000_000))
+        if scaled < 0:
+            scaled = -scaled
+            byte_string = []
+            while scaled:
+                rem = scaled & 0x1F
+                scaled >>= 5
+                if rem >= 0x20:
+                    rem += 0x20
+                byte_string.append(rem)
+            return ''.join(chr(b + 63) for b in byte_string)
+
+        encoded = []
+        while scaled:
+            rem = scaled & 0x1F
+            scaled >>= 5
+            if rem >= 0x20:
+                rem += 0x20
+            encoded.append(rem)
+        return ''.join(chr(b + 63) for b in encoded)
+
+    encoded = []
+    prev_lat = 0
+    prev_lng = 0
+    for point in points:
+        lat = int(round(point["lat"] * 1_000_000))
+        lng = int(round(point["lng"] * 1_000_000))
+        dlat = lat - prev_lat
+        dlng = lng - prev_lng
+        prev_lat = lat
+        prev_lng = lng
+
+        for value in (dlat, dlng):
+            shifted = value << 1
+            if value < 0:
+                shifted = ~shifted
+            bits = []
+            while shifted:
+                rem = shifted & 0x1F
+                shifted >>= 5
+                if rem >= 0x20:
+                    rem += 0x20
+                bits.append(rem)
+            encoded.append(bits)
+
+    result = []
+    for values in encoded:
+        for value in values:
+            result.append(chr(value + 63))
+    return ''.join(result)
 
 
 class GoogleMapsService:
@@ -101,21 +172,47 @@ class GoogleMapsService:
                 # fallback to stub if any error occurs
                 pass
 
-        # The default stub is deliberately offline/deterministic. Google Route
-        # computeRoutes must only be exercised when the project is configured for
-        # an actual optimization backend; otherwise the API should not make a
-        # second external call that changes the response contract.
+        # Minimal deterministic fallback when no Google optimizer is configured.
+        # Formula used: duration_hours = distance_km / 35
         optimized_order = list(range(len(waypoints)))
         ordered = [waypoints[i] for i in optimized_order]
+
+        points: List[Dict[str, float]] = []
+        if origin is not None:
+            points.append(origin)
+        points.extend(ordered)
+        if destination is not None:
+            points.append(destination)
+
+        distance_meters = 0.0
+        for previous, current in zip(points, points[1:]):
+            distance_meters += _haversine_meters(
+                float(previous["lat"]),
+                float(previous["lng"]),
+                float(current["lat"]),
+                float(current["lng"]),
+            )
+
+        if distance_meters <= 0 and origin is not None and destination is not None:
+            distance_meters = _haversine_meters(
+                float(origin["lat"]),
+                float(origin["lng"]),
+                float(destination["lat"]),
+                float(destination["lng"]),
+            )
+
+        distance_km = distance_meters / 1000.0
+        duration_hours = distance_km / 35.0
+        duration_seconds = max(1, int(round(duration_hours * 3600)))
 
         return {
             "optimized_order": optimized_order,
             "ordered_waypoints": ordered,
             # legacy key for compatibility
             "waypoints": ordered,
-            "distance_meters": None,
-            "duration_seconds": None,
-            "encoded_polyline": None,
+            "distance_meters": int(round(distance_meters)) if distance_meters > 0 else 1,
+            "duration_seconds": duration_seconds,
+            "encoded_polyline": _encode_polyline(points) or None,
         }
 
 

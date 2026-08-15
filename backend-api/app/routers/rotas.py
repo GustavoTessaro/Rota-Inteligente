@@ -167,7 +167,7 @@ def _persist_route_optimization(db: Session, rota: Rota) -> dict[str, Any]:
     if optimization.get("distance_meters") is not None:
         rota.distancia_prevista = Decimal(str(optimization["distance_meters"] / 1000))
     if optimization.get("duration_seconds") is not None:
-        rota.duracao_prevista = Decimal(str(optimization["duration_seconds"] / 60))
+        rota.duracao_prevista = Decimal(str(optimization["duration_seconds"] / 3600))
     if optimization.get("google_route_id"):
         rota.google_route_id = optimization["google_route_id"]
     if optimization.get("google_optimization_request_id"):

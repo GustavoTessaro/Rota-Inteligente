@@ -5,6 +5,37 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.models import Endereco, Entrega, Rota, RotaEntrega, StatusEntrega
+from app.services.google_maps_service import GoogleMapsService
+
+
+def test_default_route_optimization_emits_real_metrics() -> None:
+    optimization = GoogleMapsService().optimize_route(
+        origin={"lat": -23.550520, "lng": -46.633308},
+        destination={"lat": -23.561000, "lng": -46.640000},
+        waypoints=[{"lat": -23.555000, "lng": -46.636000}],
+    )
+
+    assert optimization["distance_meters"] is not None
+    assert optimization["distance_meters"] > 0
+    assert optimization["duration_seconds"] is not None
+    assert optimization["duration_seconds"] > 0
+    assert optimization["encoded_polyline"] is not None
+
+
+def test_default_route_optimization_uses_urban_speed_for_duration() -> None:
+    optimization = GoogleMapsService().optimize_route(
+        origin={"lat": -27.815300, "lng": -50.325000},
+        destination={"lat": -27.865000, "lng": -50.330000},
+        waypoints=[{"lat": -27.835000, "lng": -50.327500}],
+    )
+
+    distance_km = optimization["distance_meters"] / 1000
+    duration_hours = optimization["duration_seconds"] / 3600
+    expected_duration_hours = distance_km / 35
+
+    assert 4.5 <= distance_km <= 6.5
+    assert abs(duration_hours - expected_duration_hours) < 0.05
+    assert 8 * 60 <= optimization["duration_seconds"] <= 12 * 60
 
 
 def _create_route_with_delivery(client: TestClient, admin_headers: dict) -> dict:
@@ -74,7 +105,7 @@ def test_generate_route_optimizes_and_persists_metrics(client: TestClient, admin
     data = response.json()
     assert data["status"] == "PRONTA"
     assert Decimal(str(data["distancia_prevista"])) == Decimal("1.20")
-    assert Decimal(str(data["duracao_prevista"])) == Decimal("4.00")
+    assert Decimal(str(data["duracao_prevista"])) == Decimal("0.07")
     assert data["route_geometry"] == "abc123"
 
 
