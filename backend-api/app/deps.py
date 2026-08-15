@@ -189,18 +189,18 @@ def geocode_address(db: Session, endereco: Endereco) -> dict:
         }
     """
     try:
-        # Construir query de endereço
+        # Construir query apenas com os campos que afetam a geolocalização.
+        # O complemento é persistido no banco, mas não deve ser enviado ao Nominatim/Google
+        # porque ele pode quebrar o match do endereço ou gerar resultados inválidos.
         parts = [
             endereco.logradouro,
             endereco.numero,
-            endereco.complemento if endereco.complemento else None,
             endereco.bairro,
             endereco.cidade,
             endereco.estado,
             endereco.cep,
         ]
         query = ", ".join(str(p) for p in parts if p)
-        # Garantir especificação de país para melhorar resultados locais
         if "brasil" not in query.lower() and "brazil" not in query.lower():
             query = f"{query}, Brasil"
         
