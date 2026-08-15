@@ -1,13 +1,35 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import admin, commit, get_or_404
+from ..deps import admin, commit, geocode_address, get_or_404, staff
 from ..models import Endereco, Organizacao, Usuario
-from ..schemas import OrganizacaoCreate, OrganizacaoOut
+from ..schemas import EnderecoCreate, EnderecoOut, GeocodeResultIn, OrganizacaoCreate, OrganizacaoOut
+from ..services.cep_service import get_cep_service
 
 router = APIRouter(prefix="/organizacoes")
+
+
+class CEPLookupResponse(BaseModel):
+    success: bool
+    logradouro: str | None = None
+    bairro: str | None = None
+    cidade: str | None = None
+    estado: str | None = None
+    complemento: str | None = None
+    error: str | None = None
+
+
+class GeocodeAddressRequest(BaseModel):
+    logradouro: str
+    numero: str
+    complemento: str | None = None
+    bairro: str
+    cidade: str
+    estado: str
+    cep: str
 
 
 @router.get("", response_model=list[OrganizacaoOut])
@@ -60,3 +82,80 @@ def delete_organizacao(org_id: int, db: Session = Depends(get_db), _: Usuario = 
         raise HTTPException(409, "Organização está em uso e não pode ser excluída")
     db.delete(organizacao)
     commit(db)
+
+
+@router.get("/{org_id}/enderecos", response_model=list[EnderecoOut])
+def list_organization_addresses(org_id: int, db: Session = Depends(get_db), _: Usuario = Depends(staff)):
+    get_or_404(db, Organizacao, org_id)
+    return db.scalars(select(Endereco).where(Endereco.organizacao_id == org_id)).all()
+
+
+@router.post("/{org_id}/enderecos", response_model=EnderecoOut, status_code=201)
+def create_organization_address(
+    org_id: int, data: EnderecoCreate, db: Session = Depends(get_db), _: Usuario = Depends(staff)
+):
+    get_or_404(db, Organizacao, org_id)
+    address = Endereco(organizacao_id=org_id, **data.model_dump(exclude={"cliente_id", "organizacao_id"}))
+    result = geocode_address(db, address)
+    if not result["success"]:
+        raise HTTPException(422, f"Falha ao geocodificar: {result.get('error', 'Erro desconhecido')}")
+    db.add(address)
+    commit(db)
+    return address
+
+
+@router.put("/{org_id}/enderecos/{address_id}", response_model=EnderecoOut)
+def update_organization_address(
+    org_id: int, address_id: int, data: EnderecoCreate, db: Session = Depends(get_db), _: Usuario = Depends(staff)
+):
+    address = get_or_404(db, Endereco, address_id)
+    if address.organizacao_id != org_id:
+        raise HTTPException(404, "Registro não encontrado")
+
+    for key, value in data.model_dump(exclude={"cliente_id", "organizacao_id"}).items():
+        setattr(address, key, value)
+
+    result = geocode_address(db, address)
+    if not result["success"]:
+        raise HTTPException(422, f"Falha ao geocodificar: {result.get('error', 'Erro desconhecido')}")
+
+    commit(db)
+    return address
+
+
+@router.delete("/{org_id}/enderecos/{address_id}", status_code=204)
+def delete_organization_address(org_id: int, address_id: int, db: Session = Depends(get_db), _: Usuario = Depends(staff)):
+    address = get_or_404(db, Endereco, address_id)
+    if address.organizacao_id != org_id:
+        raise HTTPException(404, "Registro não encontrado")
+
+    if address.id == (db.get(Organizacao, org_id).endereco_id if db.get(Organizacao, org_id) else None):
+        raise HTTPException(409, "Endereço principal da organização não pode ser excluído antes de trocar a referência")
+
+    db.delete(address)
+    commit(db)
+
+
+@router.get("/{org_id}/enderecos/lookup-cep/{cep}", response_model=CEPLookupResponse)
+def lookup_organization_cep(org_id: int, cep: str, db: Session = Depends(get_db), _: Usuario = Depends(staff)):
+    get_or_404(db, Organizacao, org_id)
+    service = get_cep_service()
+    return service.lookup(cep)
+
+
+@router.post("/{org_id}/enderecos/geocodificar", response_model=GeocodeResultIn)
+def geocodify_organization_address(
+    org_id: int, data: GeocodeAddressRequest, db: Session = Depends(get_db), _: Usuario = Depends(staff)
+):
+    get_or_404(db, Organizacao, org_id)
+    temp_endereco = Endereco(
+        organizacao_id=org_id,
+        logradouro=data.logradouro,
+        numero=data.numero,
+        complemento=data.complemento,
+        bairro=data.bairro,
+        cidade=data.cidade,
+        estado=data.estado.upper(),
+        cep=data.cep,
+    )
+    return geocode_address(db, temp_endereco)

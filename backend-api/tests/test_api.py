@@ -81,6 +81,29 @@ def test_create_client_persists(client, admin_headers):
     assert any(item["id"] == created["id"] for item in clients)
 
 
+def test_organization_address_support_is_backwards_compatible(client, admin_headers):
+    orgs = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
+    org_id = orgs[0]["id"]
+
+    response = client.post(
+        f"/api/organizacoes/{org_id}/enderecos",
+        headers=admin_headers,
+        json={
+            "logradouro": "Rua Nova",
+            "numero": "123",
+            "complemento": "Sala 1",
+            "bairro": "Centro",
+            "cidade": "Florianópolis",
+            "estado": "SC",
+            "cep": "88015000",
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["organizacao_id"] == org_id
+    assert body["logradouro"] == "Rua Nova"
+
+
 def test_create_client_accepts_blank_optional_fields(client, admin_headers):
     response = client.post("/api/clientes", headers=admin_headers, json={
         "nome": "  Cliente Basico  ",

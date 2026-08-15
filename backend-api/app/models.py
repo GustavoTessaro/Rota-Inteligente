@@ -76,6 +76,12 @@ class Organizacao(TimestampMixin, Base):
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
     usuarios: Mapped[list["Usuario"]] = relationship(back_populates="organizacao", cascade="all, delete-orphan")
     veiculos: Mapped[list["Veiculo"]] = relationship(back_populates="organizacao", cascade="all, delete-orphan")
+    enderecos: Mapped[list["Endereco"]] = relationship(
+        "Endereco",
+        back_populates="organizacao",
+        foreign_keys="[Endereco.organizacao_id]",
+        cascade="all, delete-orphan",
+    )
 
 
 class TipoVeiculo(str, enum.Enum):
@@ -236,13 +242,19 @@ class Cliente(TimestampMixin, Base):
     telefone: Mapped[str | None] = mapped_column(String(20))
     observacoes: Mapped[str | None] = mapped_column(Text)
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
-    enderecos: Mapped[list["Endereco"]] = relationship(cascade="all, delete-orphan")
+    enderecos: Mapped[list["Endereco"]] = relationship(
+        "Endereco",
+        back_populates="cliente",
+        foreign_keys="[Endereco.cliente_id]",
+        cascade="all, delete-orphan",
+    )
 
 
 class Endereco(TimestampMixin, Base):
     __tablename__ = "enderecos"
     id: Mapped[int] = mapped_column(primary_key=True)
-    cliente_id: Mapped[int] = mapped_column(ForeignKey("clientes.id"), index=True)
+    cliente_id: Mapped[int | None] = mapped_column(ForeignKey("clientes.id"), index=True, nullable=True)
+    organizacao_id: Mapped[int | None] = mapped_column(ForeignKey("organizacoes.id"), index=True, nullable=True)
     logradouro: Mapped[str] = mapped_column(String(150))
     numero: Mapped[str] = mapped_column(String(20))
     complemento: Mapped[str | None] = mapped_column(String(100))
@@ -258,6 +270,8 @@ class Endereco(TimestampMixin, Base):
     pais: Mapped[str | None] = mapped_column(String(100))
     endereco_formatado: Mapped[str | None] = mapped_column(Text)
     place_id: Mapped[str | None] = mapped_column(String(255))
+    cliente: Mapped[Cliente | None] = relationship(back_populates="enderecos", foreign_keys=[cliente_id])
+    organizacao: Mapped[Organizacao | None] = relationship(back_populates="enderecos", foreign_keys=[organizacao_id])
 
 
 class Produto(TimestampMixin, Base):

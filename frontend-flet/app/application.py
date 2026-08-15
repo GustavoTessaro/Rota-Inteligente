@@ -1857,6 +1857,11 @@ class DeliveryApp:
                 subtitle = f'{item["cnpj"]} · {item["email"]} · {status}'
                 actions = [
                     ft.IconButton(
+                        ft.Icons.HOME,
+                        tooltip="Endereços",
+                        on_click=lambda _, org=item: self.organization_addresses_dialog(org),
+                    ),
+                    ft.IconButton(
                         ft.Icons.EDIT,
                         tooltip="Editar organização",
                         on_click=lambda _, org=item: self.organization_dialog(org),
@@ -2114,6 +2119,256 @@ class DeliveryApp:
                 ft.TextButton("Fechar", on_click=on_close),
                 ft.FilledButton("Novo endereço", icon=ft.Icons.ADD,
                                 on_click=lambda _: self.address_dialog(client, dialog, on_return)),
+            ],
+        )
+        self.open_dialog(dialog)
+
+    def organization_addresses_dialog(self, organization, on_return=None):
+        try:
+            addresses = self.api.request("GET", f'/organizacoes/{organization["id"]}/enderecos')
+        except ApiError as exc:
+            self.notify(str(exc), True)
+            return
+
+        rows = []
+        for item in addresses:
+            rows.append(ft.ListTile(
+                leading=ft.Icon(ft.Icons.HOME),
+                title=ft.Text(f'{item["logradouro"]}, {item["numero"]}'),
+                subtitle=ft.Text(f'{item["bairro"]} · {item["cidade"]}/{item["estado"]}'),
+                trailing=ft.Row([
+                    ft.IconButton(
+                        ft.Icons.EDIT,
+                        tooltip="Editar endereço",
+                        on_click=lambda _, address=item: self.organization_address_dialog(organization, dialog, on_return, address),
+                    ),
+                    ft.IconButton(
+                        ft.Icons.DELETE,
+                        tooltip="Excluir endereço",
+                        icon_color=ft.Colors.RED_700,
+                        on_click=lambda _, address=item: self.confirm_delete_organization_address(organization, address, dialog, on_return),
+                    ),
+                ], tight=True),
+            ))
+
+        def on_close(_):
+            self.close_dialog(dialog)
+            if on_return:
+                on_return()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text(f'Endereços - {organization["nome"]}'),
+            content=ft.Column(rows or [ft.Text("Nenhum endereço cadastrado.")], tight=True, width=520),
+            actions=[
+                ft.TextButton("Fechar", on_click=on_close),
+                ft.FilledButton("Novo endereço", icon=ft.Icons.ADD,
+                                on_click=lambda _: self.organization_address_dialog(organization, dialog, on_return)),
+            ],
+        )
+        self.open_dialog(dialog)
+
+    def organization_address_dialog(self, organization, parent_dialog=None, on_return=None, address=None):
+        error_message = ft.Text("", color=ft.Colors.RED_700)
+        info_message = ft.Text("", color=ft.Colors.BLUE_700)
+
+        zip_code = ft.TextField(
+            label="CEP",
+            value=(address or {}).get("cep", ""),
+            helper_text="Informe para auto-preenchimento",
+            on_change=lambda _: self.clear_errors(zip_code),
+        )
+        street = ft.TextField(label="Logradouro", value=(address or {}).get("logradouro", ""), read_only=(address is not None))
+        number = ft.TextField(label="Número", value=(address or {}).get("numero", ""))
+        complement = ft.TextField(label="Complemento", value=(address or {}).get("complemento") or "")
+        district = ft.TextField(label="Bairro", value=(address or {}).get("bairro", ""), read_only=(address is not None))
+        city = ft.TextField(label="Cidade", value=(address or {}).get("cidade", ""), read_only=(address is not None))
+        state = ft.TextField(label="UF", value=(address or {}).get("estado", "SC"), read_only=(address is not None))
+        geocoded_address_text = ft.Text("", color=ft.Colors.GREEN_700, size=12)
+        geocoded_coords = ft.Text("", color=ft.Colors.GREEN_700, size=10)
+
+        def lookup_cep_auto(_=None):
+            cep_value = self.only_digits(zip_code.value)
+            if len(cep_value) != 8:
+                return
+            if address is not None:
+                return
+            self.clear_errors(zip_code, street, district, city, state)
+            info_message.value = "Consultando CEP..."
+            self.page.update()
+            try:
+                result = self.api.request("GET", f'/organizacoes/{organization["id"]}/enderecos/lookup-cep/{cep_value}')
+                if result.get("success"):
+                    street.value = result.get("logradouro", "")
+                    district.value = result.get("bairro", "")
+                    city.value = result.get("cidade", "")
+                    state.value = result.get("estado", "").upper()
+                    info_message.value = "CEP preenchido com sucesso!"
+                else:
+                    self.set_error(zip_code, result.get("error", "CEP não encontrado"))
+                    info_message.value = ""
+            except ApiError as exc:
+                self.set_error(zip_code, str(exc))
+                info_message.value = ""
+            self.page.update()
+
+        def geocodify(_=None):
+            self.clear_errors(number, street, district, city, state, zip_code)
+            errors = []
+            valid = True
+            if not self.require_text(street, "Informe o logradouro.", 2):
+                errors.append("Logradouro: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.require_text(number, "Informe o número.", 1):
+                errors.append("Número: informe o número.")
+                valid = False
+            if not self.require_text(district, "Informe o bairro.", 2):
+                errors.append("Bairro: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.require_text(city, "Informe a cidade.", 2):
+                errors.append("Cidade: informe pelo menos 2 caracteres.")
+                valid = False
+            if not self.require_text(state, "Informe a UF.", 2):
+                errors.append("UF: informe a UF com 2 letras.")
+                valid = False
+            if len((state.value or "").strip()) != 2:
+                self.set_error(state, "Informe com 2 letras.")
+                valid = False
+            if len(self.only_digits(zip_code.value)) != 8:
+                self.set_error(zip_code, "Informe 8 dígitos.")
+                errors.append("CEP: informe 8 dígitos.")
+                valid = False
+            if not valid:
+                error_message.value = "; ".join(errors) if errors else "Corrija os campos destacados."
+                geocoded_address_text.value = ""
+                geocoded_coords.value = ""
+                self.page.update()
+                return
+            error_message.value = ""
+            info_message.value = "Localizando endereço..."
+            geocoded_address_text.value = ""
+            geocoded_coords.value = ""
+            self.page.update()
+            try:
+                payload = {
+                    "logradouro": street.value.strip(),
+                    "numero": number.value.strip(),
+                    "complemento": complement.value.strip() or None,
+                    "bairro": district.value.strip(),
+                    "cidade": city.value.strip(),
+                    "estado": state.value.strip().upper(),
+                    "cep": self.only_digits(zip_code.value),
+                }
+                result = self.api.request("POST", f'/organizacoes/{organization["id"]}/enderecos/geocodificar', json=payload)
+                if result.get("success"):
+                    geocoded_address_text.value = result.get("endereco_formatado") or "Endereço não formatado"
+                    lat = result.get("latitude")
+                    lng = result.get("longitude")
+                    if lat and lng:
+                        geocoded_coords.value = f"Coordenadas: {lat:.4f}, {lng:.4f}"
+                    info_message.value = "✓ Endereço localizado! Clique em Salvar para confirmar."
+                else:
+                    error_message.value = result.get("error", "Não foi possível localizar o endereço")
+                    geocoded_address_text.value = ""
+                    geocoded_coords.value = ""
+                    info_message.value = ""
+            except ApiError as exc:
+                error_message.value = str(exc)
+                geocoded_address_text.value = ""
+                geocoded_coords.value = ""
+                info_message.value = ""
+            self.page.update()
+
+        def save(_):
+            if not geocoded_address_text.value:
+                error_message.value = "Você deve geocodificar o endereço primeiro. Clique em 'Localizar endereço'."
+                self.page.update()
+                return
+            payload = {
+                "logradouro": street.value.strip(),
+                "numero": number.value.strip(),
+                "complemento": complement.value.strip() or None,
+                "bairro": district.value.strip(),
+                "cidade": city.value.strip(),
+                "estado": state.value.strip().upper(),
+                "cep": self.only_digits(zip_code.value),
+                "tipo": "OUTRO",
+            }
+            try:
+                if address:
+                    self.api.request("PUT", f'/organizacoes/{organization["id"]}/enderecos/{address["id"]}', json=payload)
+                    message = "Endereço atualizado."
+                else:
+                    self.api.request("POST", f'/organizacoes/{organization["id"]}/enderecos', json=payload)
+                    message = "Endereço cadastrado."
+                self.close_dialog(dialog)
+                self.notify(message)
+                if on_return:
+                    on_return()
+                    self.page.update()
+                elif parent_dialog:
+                    self.organization_addresses_dialog(organization, on_return)
+                else:
+                    self.organization_addresses_dialog(organization)
+            except ApiError as exc:
+                error_message.value = str(exc)
+                self.page.update()
+                return
+
+        if address is not None:
+            geocoded_address_text.value = address.get("endereco_formatado") or f"{address.get('logradouro')}, {address.get('numero')}"
+            if address.get("latitude") and address.get("longitude"):
+                geocoded_coords.value = f"Coordenadas: {float(address['latitude']):.4f}, {float(address['longitude']):.4f}"
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Editar endereço" if address else "Novo endereço"),
+            content=ft.Column([
+                error_message,
+                info_message,
+                ft.Divider(height=10),
+                zip_code,
+                street,
+                number,
+                complement,
+                district,
+                city,
+                state,
+                ft.Divider(height=10),
+                ft.Text("Endereço encontrado:", weight=ft.FontWeight.BOLD, size=12),
+                geocoded_address_text,
+                geocoded_coords,
+            ], tight=True, width=480, height=600, scroll=ft.ScrollMode.AUTO),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.TextButton("Localizar endereço", on_click=geocodify, icon=ft.Icons.LOCATION_ON) if not address else None,
+                ft.FilledButton("Salvar", on_click=save),
+            ],
+        )
+        if address is None:
+            zip_code.on_blur = lookup_cep_auto
+        self.open_dialog(dialog)
+
+    def confirm_delete_organization_address(self, organization, address, parent_dialog, on_return=None):
+        def delete(_):
+            try:
+                self.api.request("DELETE", f'/organizacoes/{organization["id"]}/enderecos/{address["id"]}')
+                dialog.open = False
+                parent_dialog.open = False
+                self.notify("Endereço excluído.")
+                if on_return:
+                    on_return()
+                else:
+                    self.organization_addresses_dialog(organization)
+            except ApiError as exc:
+                self.page.update()
+                self.notify(str(exc), True)
+                return
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Excluir endereço"),
+            content=ft.Text(f'Deseja excluir "{address["logradouro"]}, {address["numero"]}"?'),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.FilledButton("Excluir", icon=ft.Icons.DELETE, on_click=delete),
             ],
         )
         self.open_dialog(dialog)

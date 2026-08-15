@@ -104,13 +104,14 @@ def create_address(
     Se o endereço não puder ser geocodificado, retorna erro 422.
     """
     get_or_404(db, Cliente, client_id)
-    address = Endereco(cliente_id=client_id, **data.model_dump())
-    
+    payload = data.model_dump(exclude={"cliente_id", "organizacao_id"})
+    address = Endereco(cliente_id=client_id, **payload)
+
     # Geocodificar endereço antes de salvar
     result = geocode_address(db, address)
     if not result["success"]:
         raise HTTPException(422, f"Falha ao geocodificar: {result.get('error', 'Erro desconhecido')}")
-    
+
     db.add(address)
     commit(db)
     return address
@@ -128,16 +129,17 @@ def update_address(
     address = get_or_404(db, Endereco, address_id)
     if address.cliente_id != client_id:
         raise HTTPException(404, "Registro não encontrado")
-    
+
     # Atualizar campos do endereço
-    for key, value in data.model_dump().items():
+    payload = data.model_dump(exclude={"cliente_id", "organizacao_id"})
+    for key, value in payload.items():
         setattr(address, key, value)
-    
+
     # Geocodificar endereço antes de salvar
     result = geocode_address(db, address)
     if not result["success"]:
         raise HTTPException(422, f"Falha ao geocodificar: {result.get('error', 'Erro desconhecido')}")
-    
+
     commit(db)
     return address
 

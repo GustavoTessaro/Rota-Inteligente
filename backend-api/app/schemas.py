@@ -427,6 +427,8 @@ class EnderecoCreate(BaseModel):
     cep: str = Field(min_length=8, max_length=10)
     referencia: str | None = None
     tipo: str = "OUTRO"
+    cliente_id: int | None = None
+    organizacao_id: int | None = None
     latitude: Decimal | None = None
     longitude: Decimal | None = None
     pais: str | None = None
@@ -465,7 +467,8 @@ class EnderecoCreate(BaseModel):
 
 class EnderecoOut(EnderecoCreate, ORMModel):
     id: int
-    cliente_id: int
+    cliente_id: int | None = None
+    organizacao_id: int | None = None
     latitude: Decimal | None = None
     longitude: Decimal | None = None
     pais: str | None = None
