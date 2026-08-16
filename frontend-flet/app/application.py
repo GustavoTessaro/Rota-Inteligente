@@ -783,10 +783,10 @@ class DeliveryApp:
             route_name = current_route.get("nome", "--")
             status = current_route.get("status", "--").replace("_", " ")
             
-            # Organização (ponto de coleta)
+            # Organização (ponto de coleta) - da chave "origem"
             org_name = "--"
-            if current_route.get("organizacao"):
-                org_name = current_route["organizacao"].get("nome", "--")
+            if current_route.get("origem"):
+                org_name = current_route["origem"].get("nome", "--")
             
             # Entregas
             entregas = current_route.get("entregas", [])
@@ -801,15 +801,24 @@ class DeliveryApp:
                     proxima_entrega_text = f"Entrega #{entrega.get('id', '--')}"
                     break
             
-            # Distância e duração
-            distance = current_route.get("distancia_km", "--")
-            duration = current_route.get("duracao_minutos", "--")
+            # Distância e duração (previstos do backend)
+            # Backend retorna: distancia_prevista (float em km), duracao_prevista (float em horas)
+            distance = current_route.get("distancia_prevista", "--")
+            duration = current_route.get("duracao_prevista", "--")
             if duration != "--":
-                hours = int(duration) // 60
-                minutes = int(duration) % 60
+                # Converter de horas (float) para formato "X h Y m"
+                total_minutes = int(float(duration) * 60)
+                hours = total_minutes // 60
+                minutes = total_minutes % 60
                 duration = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
             else:
                 duration = "--"
+            
+            # Formatar distância
+            if distance != "--":
+                distance = f"{float(distance):.2f}"
+            else:
+                distance = "--"
 
             mission_content = ft.Column([
                 ft.Row([
