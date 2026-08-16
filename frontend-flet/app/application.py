@@ -190,10 +190,14 @@ class DeliveryApp:
         if error:
             def _close(_):
                 try:
-                    self.page.dialog.open = False
+                    self.page.close(dialog)
                     self.page.update()
                 except Exception:
-                    pass
+                    try:
+                        dialog.open = False
+                        self.page.update()
+                    except Exception:
+                        pass
 
             dialog = ft.AlertDialog(
                 modal=True,
@@ -204,11 +208,12 @@ class DeliveryApp:
             )
             try:
                 self.page.dialog = dialog
-                dialog.open = True
+                self.page.open(dialog)
                 self.page.update()
             except Exception:
                 try:
                     self.page.dialog = dialog
+                    dialog.open = True
                     self.page.update()
                 except Exception:
                     pass
