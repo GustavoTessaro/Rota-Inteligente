@@ -1907,13 +1907,12 @@ class DeliveryApp:
         cnpj = ft.TextField(label="CNPJ", value=(organization or {}).get("cnpj") or "")
         email = ft.TextField(label="E-mail", value=(organization or {}).get("email") or "")
         phone = ft.TextField(label="Telefone", value=(organization or {}).get("telefone") or "")
-        address = ft.TextField(label="Endereço", value=(organization or {}).get("endereco") or "", multiline=True)
         active = ft.Checkbox(label="Ativo", value=(organization or {}).get("ativo", True))
 
         def validate():
             errors = []
             valid = True
-            self.clear_errors(name, cnpj, email, address)
+            self.clear_errors(name, cnpj, email)
             if len(name.value.strip()) < 2:
                 self.set_error(name, "Informe pelo menos 2 caracteres.")
                 errors.append("Nome: informe pelo menos 2 caracteres.")
@@ -1925,10 +1924,6 @@ class DeliveryApp:
                 valid = False
             if not self.validate_email_field(email):
                 errors.append("E-mail: informe um e-mail válido.")
-                valid = False
-            if len(address.value.strip()) < 5:
-                self.set_error(address, "Informe um endereço válido.")
-                errors.append("Endereço: informe um endereço válido.")
                 valid = False
             self.page.update()
             return valid, errors
@@ -1944,7 +1939,7 @@ class DeliveryApp:
                 "cnpj": self.only_digits(cnpj.value),
                 "email": email.value.strip(),
                 "telefone": self.only_digits(phone.value) or None,
-                "endereco": address.value.strip(),
+                "endereco": (organization or {}).get("endereco") or "",
                 "ativo": active.value,
             }
             try:
@@ -1964,7 +1959,7 @@ class DeliveryApp:
 
         dialog = ft.AlertDialog(
             title=ft.Text("Editar organização" if organization else "Nova organização"),
-            content=ft.Column([error_message, name, cnpj, email, phone, address, active], tight=True, width=420, height=420, scroll=ft.ScrollMode.AUTO),
+            content=ft.Column([error_message, name, cnpj, email, phone, active], tight=True, width=420, height=360, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
                      ft.FilledButton("Salvar", on_click=save)],
         )
@@ -2132,9 +2127,10 @@ class DeliveryApp:
 
         rows = []
         for item in addresses:
+            principal_badge = " ★ Principal" if item.get("principal") else ""
             rows.append(ft.ListTile(
-                leading=ft.Icon(ft.Icons.HOME),
-                title=ft.Text(f'{item["logradouro"]}, {item["numero"]}'),
+                leading=ft.Icon(ft.Icons.STAR if item.get("principal") else ft.Icons.HOME),
+                title=ft.Text(f'{item["logradouro"]}, {item["numero"]}{principal_badge}', weight=ft.FontWeight.BOLD if item.get("principal") else None),
                 subtitle=ft.Text(f'{item["bairro"]} · {item["cidade"]}/{item["estado"]}'),
                 trailing=ft.Row([
                     ft.IconButton(
@@ -2171,6 +2167,11 @@ class DeliveryApp:
         error_message = ft.Text("", color=ft.Colors.RED_700)
         info_message = ft.Text("", color=ft.Colors.BLUE_700)
 
+        try:
+            existing_addresses = self.api.request("GET", f'/organizacoes/{organization["id"]}/enderecos') if address is None else []
+        except ApiError:
+            existing_addresses = []
+
         zip_code = ft.TextField(
             label="CEP",
             value=(address or {}).get("cep", ""),
@@ -2183,6 +2184,11 @@ class DeliveryApp:
         district = ft.TextField(label="Bairro", value=(address or {}).get("bairro", ""), read_only=(address is not None))
         city = ft.TextField(label="Cidade", value=(address or {}).get("cidade", ""), read_only=(address is not None))
         state = ft.TextField(label="UF", value=(address or {}).get("estado", "SC"), read_only=(address is not None))
+        default_principal = (address or {}).get("principal", False) or (address is None and not existing_addresses)
+        principal_checkbox = ft.Checkbox(
+            label="Marcar como endereço principal",
+            value=default_principal,
+        )
         geocoded_address_text = ft.Text("", color=ft.Colors.GREEN_700, size=12)
         geocoded_coords = ft.Text("", color=ft.Colors.GREEN_700, size=10)
 
@@ -2292,6 +2298,7 @@ class DeliveryApp:
                 "estado": state.value.strip().upper(),
                 "cep": self.only_digits(zip_code.value),
                 "tipo": "OUTRO",
+                "principal": principal_checkbox.value,
             }
             try:
                 if address:
@@ -2319,6 +2326,14 @@ class DeliveryApp:
             if address.get("latitude") and address.get("longitude"):
                 geocoded_coords.value = f"Coordenadas: {float(address['latitude']):.4f}, {float(address['longitude']):.4f}"
 
+        # Build actions list conditionally
+        actions_list = [
+            ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+        ]
+        if not address:
+            actions_list.append(ft.TextButton("Localizar endereço", on_click=geocodify, icon=ft.Icons.LOCATION_ON))
+        actions_list.append(ft.FilledButton("Salvar", on_click=save))
+
         dialog = ft.AlertDialog(
             title=ft.Text("Editar endereço" if address else "Novo endereço"),
             content=ft.Column([
@@ -2332,16 +2347,13 @@ class DeliveryApp:
                 district,
                 city,
                 state,
+                principal_checkbox,
                 ft.Divider(height=10),
                 ft.Text("Endereço encontrado:", weight=ft.FontWeight.BOLD, size=12),
                 geocoded_address_text,
                 geocoded_coords,
             ], tight=True, width=480, height=600, scroll=ft.ScrollMode.AUTO),
-            actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
-                ft.TextButton("Localizar endereço", on_click=geocodify, icon=ft.Icons.LOCATION_ON) if not address else None,
-                ft.FilledButton("Salvar", on_click=save),
-            ],
+            actions=actions_list,
         )
         if address is None:
             zip_code.on_blur = lookup_cep_auto
@@ -2591,6 +2603,13 @@ class DeliveryApp:
             if address.get("latitude") and address.get("longitude"):
                 geocoded_coords.value = f"Coordenadas: {float(address['latitude']):.4f}, {float(address['longitude']):.4f}"
 
+        actions_list = [
+            ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+        ]
+        if not address:
+            actions_list.append(ft.TextButton("Localizar endereço", on_click=geocodify, icon=ft.Icons.LOCATION_ON))
+        actions_list.append(ft.FilledButton("Salvar", on_click=save))
+
         dialog = ft.AlertDialog(
             title=ft.Text("Editar endereço" if address else "Novo endereço"),
             content=ft.Column([
@@ -2609,17 +2628,13 @@ class DeliveryApp:
                 geocoded_address_text,
                 geocoded_coords,
             ], tight=True, width=480, height=600, scroll=ft.ScrollMode.AUTO),
-            actions=[
-                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
-                ft.TextButton("Localizar endereço", on_click=geocodify, icon=ft.Icons.LOCATION_ON) if not address else None,
-                ft.FilledButton("Salvar", on_click=save),
-            ],
+            actions=actions_list,
         )
-        
+
         # Se não estiver editando, configurar on_blur no CEP
         if address is None:
             zip_code.on_blur = lookup_cep_auto
-        
+
         self.open_dialog(dialog)
 
     def confirm_delete_address(self, client, address, parent_dialog, on_return=None):
@@ -3253,12 +3268,14 @@ class DeliveryApp:
     def order_dialog(self, order=None):
         try:
             clients = self.api.request("GET", "/clientes")
+            organizations = self.api.request("GET", "/organizacoes?limit=100&offset=0")
             products = self.api.request("GET", "/produtos")
             existing_items = self.api.request("GET", f'/pedidos/{order["id"]}/itens') if order else []
         except ApiError as exc:
             self.notify(str(exc), True)
             return
         active_clients = [item for item in clients if item["ativo"]]
+        active_organizations = [item for item in organizations if item.get("ativo", True)]
         active_products = [item for item in products if item["ativo"]]
         product_names = {item["id"]: item["nome"] for item in products}
         order_items = [
@@ -3334,6 +3351,11 @@ class DeliveryApp:
             value=str(order["cliente_id"]) if order else None,
             options=[self.option(item["id"], item["nome"]) for item in active_clients],
             on_change=lambda _: on_client_change(),
+        )
+        organization = ft.Dropdown(
+            label="Ponto de Coleta (Organização)",
+            value=str(order["organizacao_id"]) if order and order.get("organizacao_id") else None,
+            options=[self.option(item["id"], item["nome"]) for item in active_organizations],
         )
         address = ft.Dropdown(
             label="Endereço de entrega",
@@ -3425,11 +3447,14 @@ class DeliveryApp:
         error_message = ft.Text("", color=ft.Colors.RED_700)
 
         def save(_):
-            self.clear_errors(client, address, priority)
+            self.clear_errors(client, organization, address, priority)
             errors = []
             valid = True
             if not self.require_dropdown(client, "Selecione o cliente."):
                 errors.append("Cliente: selecione um cliente.")
+                valid = False
+            if not self.require_dropdown(organization, "Selecione a organização."):
+                errors.append("Organização: selecione a organização do ponto de coleta.")
                 valid = False
             if not self.require_dropdown(address, "Selecione o endereço de entrega."):
                 errors.append("Endereço de entrega: selecione um endereço.")
@@ -3447,6 +3472,7 @@ class DeliveryApp:
                 return
             payload = {
                 "cliente_id": int(client.value),
+                "organizacao_id": int(organization.value) if organization.value else None,
                 "endereco_entrega_id": int(address.value),
                 "prioridade": priority.value,
                 "forma_pagamento": payment.value.strip() or None,
@@ -3478,6 +3504,7 @@ class DeliveryApp:
             title=ft.Text("Editar pedido" if order else "Novo pedido"),
             content=ft.Column([
                 client,
+                organization,
                 ft.Row([address, open_addresses_button], spacing=10),
                 ft.Row([
                     product,

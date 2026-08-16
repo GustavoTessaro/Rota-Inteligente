@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import commit, get_or_404, order_has_delivery, recalculate_order_total, staff
-from ..models import Cliente, Endereco, Pedido, PedidoItem, Produto, StatusPedido, Usuario
+from ..models import Cliente, Endereco, Organizacao, Pedido, PedidoItem, Produto, StatusPedido, Usuario
 from ..schemas import PedidoCreate, PedidoItemIn, PedidoItemOut, PedidoOut, PedidoStatusIn
 
 router = APIRouter(prefix="/pedidos")
@@ -40,6 +40,9 @@ def create_order(
     client = get_or_404(db, Cliente, data.cliente_id)
     if not client.ativo:
         raise HTTPException(422, "Cliente inativo não pode receber novo pedido")
+    if data.organizacao_id is None:
+        raise HTTPException(422, "Pedido novo deve estar associado a uma organização")
+    get_or_404(db, Organizacao, data.organizacao_id)
     if data.endereco_entrega_id is not None:
         address = get_or_404(db, Endereco, data.endereco_entrega_id)
         if address.cliente_id != data.cliente_id:
@@ -51,6 +54,7 @@ def create_order(
     total = sum((item.valor_unitario * item.quantidade for item in data.itens), Decimal("0"))
     order = Pedido(
         cliente_id=data.cliente_id,
+        organizacao_id=data.organizacao_id,
         endereco_entrega_id=data.endereco_entrega_id,
         numero_pedido=f"PED-{datetime.now():%Y%m%d}-{uuid4().hex[:6].upper()}",
         prioridade=data.prioridade,
@@ -73,6 +77,9 @@ def update_order(order_id: int, data: PedidoCreate, db: Session = Depends(get_db
     client = get_or_404(db, Cliente, data.cliente_id)
     if not client.ativo:
         raise HTTPException(422, "Cliente inativo não pode receber pedido")
+    if data.organizacao_id is None:
+        raise HTTPException(422, "Pedido deve estar associado a uma organização")
+    get_or_404(db, Organizacao, data.organizacao_id)
     if data.endereco_entrega_id is not None:
         address = get_or_404(db, Endereco, data.endereco_entrega_id)
         if address.cliente_id != data.cliente_id:
@@ -82,6 +89,7 @@ def update_order(order_id: int, data: PedidoCreate, db: Session = Depends(get_db
     if len(set(product_ids)) != len(products):
         raise HTTPException(422, "Um ou mais produtos não existem ou estão inativos")
     order.cliente_id = data.cliente_id
+    order.organizacao_id = data.organizacao_id
     order.endereco_entrega_id = data.endereco_entrega_id
     order.prioridade = data.prioridade
     order.forma_pagamento = data.forma_pagamento

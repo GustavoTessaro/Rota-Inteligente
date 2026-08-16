@@ -52,7 +52,9 @@ def list_organizacoes(
 def create_organizacao(data: OrganizacaoCreate, db: Session = Depends(get_db), _: Usuario = Depends(admin)):
     if data.endereco_id is not None:
         get_or_404(db, Endereco, data.endereco_id)
-    organizacao = Organizacao(**data.model_dump(exclude={"endereco_id"}))
+    payload = data.model_dump(exclude={"endereco_id"})
+    payload["endereco"] = payload.get("endereco") or ""
+    organizacao = Organizacao(**payload)
     if data.endereco_id is not None:
         organizacao.endereco_id = data.endereco_id
     db.add(organizacao)
@@ -65,6 +67,7 @@ def update_organizacao(org_id: int, data: OrganizacaoCreate, db: Session = Depen
     organizacao = get_or_404(db, Organizacao, org_id)
     payload = data.model_dump()
     endereco_id = payload.pop("endereco_id", None)
+    payload["endereco"] = payload.get("endereco") or ""
     for key, value in payload.items():
         setattr(organizacao, key, value)
     if endereco_id is not None:
@@ -94,13 +97,27 @@ def list_organization_addresses(org_id: int, db: Session = Depends(get_db), _: U
 def create_organization_address(
     org_id: int, data: EnderecoCreate, db: Session = Depends(get_db), _: Usuario = Depends(staff)
 ):
-    get_or_404(db, Organizacao, org_id)
+    org = get_or_404(db, Organizacao, org_id)
     address = Endereco(organizacao_id=org_id, **data.model_dump(exclude={"cliente_id", "organizacao_id"}))
     result = geocode_address(db, address)
     if not result["success"]:
         raise HTTPException(422, f"Falha ao geocodificar: {result.get('error', 'Erro desconhecido')}")
+    
+    # If this address is marked as principal, unmark all others and update org reference
+    if address.principal:
+        db.query(Endereco).filter(
+            Endereco.organizacao_id == org_id,
+            Endereco.id != address.id
+        ).update({Endereco.principal: False})
+    
     db.add(address)
     commit(db)
+    
+    # Update organization's endereco_id if this is the principal address
+    if address.principal:
+        org.endereco_id = address.id
+        commit(db)
+    
     return address
 
 
@@ -108,16 +125,26 @@ def create_organization_address(
 def update_organization_address(
     org_id: int, address_id: int, data: EnderecoCreate, db: Session = Depends(get_db), _: Usuario = Depends(staff)
 ):
+    org = get_or_404(db, Organizacao, org_id)
     address = get_or_404(db, Endereco, address_id)
     if address.organizacao_id != org_id:
         raise HTTPException(404, "Registro não encontrado")
-
-    for key, value in data.model_dump(exclude={"cliente_id", "organizacao_id"}).items():
+    
+    payload = data.model_dump(exclude={"cliente_id", "organizacao_id"})
+    for key, value in payload.items():
         setattr(address, key, value)
 
     result = geocode_address(db, address)
     if not result["success"]:
         raise HTTPException(422, f"Falha ao geocodificar: {result.get('error', 'Erro desconhecido')}")
+
+    # If this address is marked as principal, unmark all others and update org reference
+    if address.principal:
+        db.query(Endereco).filter(
+            Endereco.organizacao_id == org_id,
+            Endereco.id != address.id
+        ).update({Endereco.principal: False})
+        org.endereco_id = address.id
 
     commit(db)
     return address
@@ -125,12 +152,22 @@ def update_organization_address(
 
 @router.delete("/{org_id}/enderecos/{address_id}", status_code=204)
 def delete_organization_address(org_id: int, address_id: int, db: Session = Depends(get_db), _: Usuario = Depends(staff)):
+    org = get_or_404(db, Organizacao, org_id)
     address = get_or_404(db, Endereco, address_id)
     if address.organizacao_id != org_id:
         raise HTTPException(404, "Registro não encontrado")
 
-    if address.id == (db.get(Organizacao, org_id).endereco_id if db.get(Organizacao, org_id) else None):
-        raise HTTPException(409, "Endereço principal da organização não pode ser excluído antes de trocar a referência")
+    # If deleting the principal address, mark the next one as principal
+    if address.principal or address.id == org.endereco_id:
+        remaining = db.query(Endereco).filter(
+            Endereco.organizacao_id == org_id,
+            Endereco.id != address.id
+        ).first()
+        if remaining:
+            remaining.principal = True
+            org.endereco_id = remaining.id
+        else:
+            org.endereco_id = None
 
     db.delete(address)
     commit(db)

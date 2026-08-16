@@ -270,6 +270,7 @@ class Endereco(TimestampMixin, Base):
     pais: Mapped[str | None] = mapped_column(String(100))
     endereco_formatado: Mapped[str | None] = mapped_column(Text)
     place_id: Mapped[str | None] = mapped_column(String(255))
+    principal: Mapped[bool] = mapped_column(Boolean, default=False)
     cliente: Mapped[Cliente | None] = relationship(back_populates="enderecos", foreign_keys=[cliente_id])
     organizacao: Mapped[Organizacao | None] = relationship(back_populates="enderecos", foreign_keys=[organizacao_id])
 
@@ -289,6 +290,7 @@ class Pedido(TimestampMixin, Base):
     __tablename__ = "pedidos"
     id: Mapped[int] = mapped_column(primary_key=True)
     cliente_id: Mapped[int] = mapped_column(ForeignKey("clientes.id"), index=True)
+    organizacao_id: Mapped[int | None] = mapped_column(ForeignKey("organizacoes.id"), index=True)
     endereco_entrega_id: Mapped[int | None] = mapped_column(ForeignKey("enderecos.id"), index=True)
     numero_pedido: Mapped[str] = mapped_column(String(30), unique=True, index=True)
     status: Mapped[StatusPedido] = mapped_column(Enum(StatusPedido), default=StatusPedido.ABERTO)
@@ -298,6 +300,7 @@ class Pedido(TimestampMixin, Base):
     observacoes: Mapped[str | None] = mapped_column(Text)
     criado_por: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
     cliente: Mapped[Cliente] = relationship()
+    organizacao: Mapped[Organizacao | None] = relationship()
     endereco_entrega: Mapped[Endereco | None] = relationship(foreign_keys=[endereco_entrega_id])
     itens: Mapped[list["PedidoItem"]] = relationship(cascade="all, delete-orphan")
 

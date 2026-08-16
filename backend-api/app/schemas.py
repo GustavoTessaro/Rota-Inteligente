@@ -85,7 +85,7 @@ class OrganizacaoCreate(BaseModel):
     cnpj: str
     email: EmailStr
     telefone: str | None = None
-    endereco: str = Field(min_length=5, max_length=255)
+    endereco: str | None = None
     endereco_id: int | None = None
     ativo: bool = True
 
@@ -434,6 +434,7 @@ class EnderecoCreate(BaseModel):
     pais: str | None = None
     endereco_formatado: str | None = None
     place_id: str | None = None
+    principal: bool = False
 
     @field_validator("logradouro", "numero", "complemento", "bairro", "cidade", "estado", "cep", "referencia", "tipo", mode="before")
     @classmethod
@@ -474,6 +475,7 @@ class EnderecoOut(EnderecoCreate, ORMModel):
     pais: str | None = None
     endereco_formatado: str | None = None
     place_id: str | None = None
+    principal: bool = False
 
 
 class ProdutoCreate(BaseModel):
@@ -511,6 +513,7 @@ class PedidoItemOut(PedidoItemIn, ORMModel):
 
 class PedidoCreate(BaseModel):
     cliente_id: int
+    organizacao_id: int | None = None
     endereco_entrega_id: int | None = None
     prioridade: Prioridade = Prioridade.NORMAL
     forma_pagamento: str | None = None
@@ -521,6 +524,7 @@ class PedidoCreate(BaseModel):
 class PedidoOut(ORMModel):
     id: int
     cliente_id: int
+    organizacao_id: int | None
     endereco_entrega_id: int | None
     numero_pedido: str
     status: StatusPedido
