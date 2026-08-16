@@ -1,15 +1,170 @@
 from datetime import datetime
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
-from app.models import Rota, RotaPosicao
+from app.models import Endereco, Organizacao, Pedido, Rota, RotaPosicao
 
 
 def _login(client: TestClient, email: str, password: str = "123456") -> dict:
     response = client.post("/api/auth/login", json={"email": email, "senha": password})
     assert response.status_code == 200
     return {"Authorization": f'Bearer {response.json()["token"]}'}
+
+
+def _seed_organization_with_principal_address(name: str, cnpj: str | None = None):
+    with SessionLocal() as db:
+        org = Organizacao(
+            nome=name,
+            cnpj=cnpj or f"{int(datetime.utcnow().timestamp() * 1000) % 10000000000000:014d}",
+            email=f"{name.lower().replace(' ', '.')}@teste.com",
+            telefone="47999999999",
+            endereco="",
+            ativo=True,
+        )
+        db.add(org)
+        db.flush()
+
+        address = Endereco(
+            organizacao_id=org.id,
+            logradouro="Rua Heitor Villa Lobos",
+            numero="225",
+            bairro="Centro",
+            cidade="Lages",
+            estado="SC",
+            cep="88502000",
+            principal=True,
+            latitude=Decimal("-27.8153"),
+            longitude=Decimal("-50.3264"),
+            endereco_formatado="Rua Heitor Villa Lobos, 225 - Centro, Lages - SC",
+        )
+        db.add(address)
+        db.flush()
+        org.endereco_id = address.id
+        org.endereco = "Rua Heitor Villa Lobos, 225"
+        db.commit()
+        db.refresh(org)
+        db.refresh(address)
+        return org, address
+
+
+def test_route_uses_organization_principal_address_and_persists_metrics(client: TestClient, admin_headers: dict) -> None:
+    org, address = _seed_organization_with_principal_address("Operação Norte")
+
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
+    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    with SessionLocal() as db:
+        pedido = db.get(Pedido, delivery["pedido_id"])
+        assert pedido is not None
+        pedido.organizacao_id = org.id
+        db.commit()
+
+    response = client.post(
+        "/api/rotas/gerar",
+        headers=admin_headers,
+        json={
+            "nome": "Rota org principal",
+            "descricao": "Valida origem pelo principal",
+            "pedido_ids": [delivery["pedido_id"]],
+            "motorista_id": None,
+            "veiculo_id": None,
+            "status": "PLANEJADA",
+        },
+    )
+    assert response.status_code == 201, response.text
+    route = response.json()
+    assert route["organizacao_id"] == org.id
+    assert route["origem_endereco_id"] == address.id
+    assert route["distancia_prevista"] > 0
+    assert route["duracao_prevista"] > 0
+
+
+def test_route_rejects_mixed_organizations(client: TestClient, admin_headers: dict) -> None:
+    org_a, _ = _seed_organization_with_principal_address("Operação Norte A")
+    org_b, _ = _seed_organization_with_principal_address("Operação Sul B")
+
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
+    first = next(item for item in deliveries if item["status"] != "CANCELADA")
+    second = next(item for item in deliveries if item["status"] != "CANCELADA" and item["pedido_id"] != first["pedido_id"])
+
+    with SessionLocal() as db:
+        pedido_a = db.get(Pedido, first["pedido_id"])
+        pedido_b = db.get(Pedido, second["pedido_id"])
+        assert pedido_a is not None and pedido_b is not None
+        pedido_a.organizacao_id = org_a.id
+        pedido_b.organizacao_id = org_b.id
+        db.commit()
+
+    response = client.post(
+        "/api/rotas/gerar",
+        headers=admin_headers,
+        json={
+            "nome": "Rota misturada",
+            "pedido_ids": [first["pedido_id"], second["pedido_id"]],
+            "status": "PLANEJADA",
+        },
+    )
+    assert response.status_code == 422
+    assert "pontos de coleta diferentes" in response.json()["detail"].lower()
+
+
+def test_route_rejects_organization_without_principal_address(client: TestClient, admin_headers: dict) -> None:
+    with SessionLocal() as db:
+        org = Organizacao(
+            nome="Operação sem principal",
+            cnpj=f"{int(datetime.utcnow().timestamp() * 1000) % 10000000000000:014d}",
+            email="semprincipal@teste.com",
+            telefone="47988888888",
+            endereco="",
+            ativo=True,
+        )
+        db.add(org)
+        db.commit()
+        db.refresh(org)
+
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
+    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    with SessionLocal() as db:
+        pedido = db.get(Pedido, delivery["pedido_id"])
+        assert pedido is not None
+        pedido.organizacao_id = org.id
+        db.commit()
+
+    response = client.post(
+        "/api/rotas/gerar",
+        headers=admin_headers,
+        json={
+            "nome": "Rota sem origem",
+            "pedido_ids": [delivery["pedido_id"]],
+            "status": "PLANEJADA",
+        },
+    )
+    assert response.status_code == 422
+    assert "endereço principal geocodificado" in response.json()["detail"].lower()
+
+
+def test_route_rejects_legacy_order_without_organization(client: TestClient, admin_headers: dict) -> None:
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
+    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+
+    with SessionLocal() as db:
+        pedido = db.get(Pedido, delivery["pedido_id"])
+        assert pedido is not None
+        pedido.organizacao_id = None
+        db.commit()
+
+    response = client.post(
+        "/api/rotas/gerar",
+        headers=admin_headers,
+        json={
+            "nome": "Rota legado",
+            "pedido_ids": [delivery["pedido_id"]],
+            "status": "PLANEJADA",
+        },
+    )
+    assert response.status_code == 422
+    assert "vinculado a uma organização" in response.json()["detail"].lower()
 
 
 def test_route_lifecycle_and_tracking_integration(client: TestClient, admin_headers: dict) -> None:

@@ -240,7 +240,7 @@ class RotaCreate(BaseModel):
 class RotaGerarIn(BaseModel):
     nome: str = Field(min_length=2, max_length=150)
     descricao: str | None = None
-    organizacao_id: int
+    organizacao_id: int | None = None
     veiculo_id: int | None = None
     motorista_id: int | None = None
     pedido_ids: list[int] = Field(min_length=1)
@@ -353,10 +353,10 @@ class RotaOut(ORMModel):
     data_conclusao: datetime | None
     origem_endereco_id: int | None
     destino_endereco_id: int | None
-    distancia_prevista: Decimal
-    duracao_prevista: Decimal
-    distancia_real: Decimal
-    duracao_real: Decimal
+    distancia_prevista: float = Field(default=0.0, ge=0)
+    duracao_prevista: float = Field(default=0.0, ge=0)
+    distancia_real: float = Field(default=0.0, ge=0)
+    duracao_real: float = Field(default=0.0, ge=0)
     progresso_percentual: int
     quilometragem_inicial: int | None
     quilometragem_final: int | None

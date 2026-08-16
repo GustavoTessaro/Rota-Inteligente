@@ -64,7 +64,7 @@ class DeliveryApp:
         elif not checked and order_id in selected:
             selected = [item for item in selected if item != order_id]
         self.delivery_management_selection["pedido_ids"] = selected
-        self.page.update()
+        self.delivery_management_view()
 
     def start(self):
         self.page.title = "Gestão de Entregas"
@@ -181,6 +181,39 @@ class DeliveryApp:
     def notify(self, message: str, error=False):
         color = ft.Colors.RED_700 if error else ft.Colors.GREEN_700
 
+        # debug log para terminal do flet
+        try:
+            print(f"[notify] message={message!r} error={error}")
+        except Exception:
+            pass
+
+        if error:
+            def _close(_):
+                try:
+                    self.page.dialog.open = False
+                    self.page.update()
+                except Exception:
+                    pass
+
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("Erro"),
+                content=ft.Text(message),
+                actions=[ft.TextButton("OK", on_click=_close)],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+            try:
+                self.page.dialog = dialog
+                dialog.open = True
+                self.page.update()
+            except Exception:
+                try:
+                    self.page.dialog = dialog
+                    self.page.update()
+                except Exception:
+                    pass
+            return
+
         def _close(_):
             try:
                 snack.open = False
@@ -191,12 +224,6 @@ class DeliveryApp:
         # duração maior para testes e visibilidade
         snack = ft.SnackBar(content=ft.Text(message), bgcolor=color,
                              action=ft.TextButton("Fechar", on_click=_close), duration=5000)
-
-        # debug log para terminal do flet
-        try:
-            print(f"[notify] message={message!r} error={error}")
-        except Exception:
-            pass
 
         # Compatibilidade com diferentes versões do Flet
         try:
@@ -892,7 +919,6 @@ class DeliveryApp:
 
         available_orders = [item for item in orders if item.get("status") not in {"CANCELADO", "FINALIZADO"}]
         selected_order_ids = self.delivery_management_selection.get("pedido_ids", [])
-        selected_collection_ids = self.delivery_management_selection.get("pontos_coleta_ids", [])
 
         order_checkboxes = []
         for order in available_orders:
@@ -922,76 +948,62 @@ class DeliveryApp:
             )
 
         selected_orders = [order for order in available_orders if order["id"] in selected_order_ids]
-        selected_orgs = [org for org in organizations if org["id"] in selected_collection_ids]
-
-        collection_options = [self.option(str(item["id"]), item["nome"]) for item in organizations if item.get("ativo", True)]
-        collection_dropdown = ft.Dropdown(
-            label="Ponto de coleta",
-            options=collection_options,
-            value=None,
-            hint_text="Selecione uma organização como ponto de coleta",
-        )
+        selected_order_org_ids = {order.get("organizacao_id") for order in selected_orders if order.get("organizacao_id") is not None}
+        detected_org_id = None
+        detected_org = None
+        if len(selected_order_org_ids) == 1:
+            detected_org_id = next(iter(selected_order_org_ids))
+            detected_org = next((org for org in organizations if org["id"] == detected_org_id), None)
 
         driver_options = [self.option(str(item["id"]), item["nome"]) for item in users if item.get("perfil") == "MOTORISTA" and item.get("ativo")]
         vehicle_options = [self.option(str(item["id"]), f"{item.get('placa')} · {item.get('modelo')}") for item in vehicles if item.get("ativo")]
         driver_dropdown = ft.Dropdown(label="Motorista", options=driver_options, value=None)
         vehicle_dropdown = ft.Dropdown(label="Veículo", options=vehicle_options, value=None)
 
-        def add_collection(_):
-            if collection_dropdown.value:
-                org_id = int(collection_dropdown.value)
-                selected = self.delivery_management_selection.get("pontos_coleta_ids", [])
-                if org_id not in selected:
-                    selected.append(org_id)
-                    self.delivery_management_selection["pontos_coleta_ids"] = selected
-                    collection_dropdown.value = None
-                self.delivery_management_view()
-
-        def remove_collection(org_id):
-            selected = [item for item in self.delivery_management_selection.get("pontos_coleta_ids", []) if item != org_id]
-            self.delivery_management_selection["pontos_coleta_ids"] = selected
-            self.delivery_management_view()
-
-        selected_collection_tiles = [
-            ft.Container(
-                ft.Row([
-                    ft.Text(org["nome"], weight=ft.FontWeight.BOLD),
-                    ft.IconButton(ft.Icons.DELETE, tooltip="Remover", on_click=lambda _, org_id=org["id"]: remove_collection(org_id)),
-                ]),
-                padding=8,
-                border_radius=10,
-                bgcolor=ft.Colors.GREY_100,
-            )
-            for org in selected_orgs
-        ]
-
         def generate(_):
             pedido_ids = self.delivery_management_selection.get("pedido_ids") or []
-            pontos_coleta_ids = self.delivery_management_selection.get("pontos_coleta_ids") or []
             if not pedido_ids:
                 self.notify("Selecione ao menos um pedido para gerar a rota.", True)
                 return
-            if not pontos_coleta_ids:
-                self.notify("Selecione ao menos um ponto de coleta para gerar a rota.", True)
-                return
-            org_id = self.user.get("organizacao_id") or (organizations[0]["id"] if organizations else None)
-            if org_id is None:
-                self.notify("Organização atual não está definida.", True)
-                return
+
+            org_ids = []
             for pedido_id in pedido_ids:
                 order = next((item for item in orders if item["id"] == pedido_id), None)
                 if not order:
                     self.notify(f"Pedido {pedido_id} não encontrado.", True)
                     return
+                if order.get("organizacao_id") is None:
+                    self.notify(f"Pedido #{pedido_id} está sem organização vinculada. Vincule o pedido antes de gerar a rota.", True)
+                    return
                 if order.get("endereco_entrega_id") is None:
                     self.notify(f"Pedido #{pedido_id} precisa de endereço de entrega válido antes de entrar em rota.", True)
                     return
+                org_ids.append(order["organizacao_id"])
+
+            unique_org_ids = set(org_ids)
+            if len(unique_org_ids) != 1:
+                self.notify("Os pedidos selecionados pertencem a pontos de coleta diferentes. Gere uma rota para cada organização.", True)
+                return
+
+            org_id = next(iter(unique_org_ids))
+            organization = next((item for item in organizations if item["id"] == org_id), None)
+            if organization is None:
+                self.notify("Organização detectada não foi encontrada.", True)
+                return
+            if organization.get("endereco_id") is None:
+                self.notify("A organização selecionada não possui um endereço principal geocodificado.", True)
+                return
+            principal_endpoint = self.api.request("GET", f"/organizacoes/{org_id}/enderecos")
+            principal_address = next((item for item in principal_endpoint if item["id"] == organization["endereco_id"]), None)
+            if principal_address is None or principal_address.get("latitude") is None or principal_address.get("longitude") is None:
+                self.notify("A organização selecionada não possui um endereço principal geocodificado.", True)
+                return
+
             payload = {
                 "nome": f"Rota gerada {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}",
                 "descricao": "Rota gerada a partir da Gestão de Entregas",
                 "organizacao_id": int(org_id),
                 "pedido_ids": pedido_ids,
-                "pontos_coleta_ids": pontos_coleta_ids,
                 "motorista_id": int(driver_dropdown.value) if driver_dropdown.value else None,
                 "veiculo_id": int(vehicle_dropdown.value) if vehicle_dropdown.value else None,
                 "status": "OTIMIZANDO",
@@ -1016,7 +1028,7 @@ class DeliveryApp:
                 ft.Text(f"Duração prevista: {route.get('duracao_prevista') or '-'} h"),
                 ft.Text(f"Progresso: {route.get('progresso_percentual') or 0}%"),
                 ft.Text(f"Organização: {route.get('organizacao_id') or '-'}"),
-                ft.Text(f"Pontos de coleta: {', '.join(org['nome'] for org in selected_orgs) or '-'}"),
+                ft.Text(f"Origem: {route.get('origem_endereco_id') or '-'}"),
                 ft.Text(f"Motorista: {route.get('motorista_id') or '-'}"),
                 ft.Text(f"Veículo: {route.get('veiculo_id') or '-'}"),
                 ft.Text(f"Observações: {route.get('observacoes') or '-'}"),
@@ -1029,13 +1041,28 @@ class DeliveryApp:
                 ft.Text("Nenhuma rota gerada ainda."),
             ]
 
+        origin_summary = "-"
+        if detected_org is not None:
+            try:
+                org_addresses = self.api.request("GET", f"/organizacoes/{detected_org['id']}/enderecos")
+                principal_address = next((item for item in org_addresses if item["id"] == detected_org.get("endereco_id")), None)
+                if principal_address:
+                    origin_summary = (
+                        f"{principal_address.get('logradouro', '')}, {principal_address.get('numero', '')} - "
+                        f"{principal_address.get('bairro', '')}, {principal_address.get('cidade', '')}/{principal_address.get('estado', '')}"
+                    )
+            except Exception:
+                origin_summary = "-"
+
         summary_panel = ft.Column([
             ft.Text("Resumo da seleção", weight=ft.FontWeight.BOLD, size=20),
             ft.Text(f"Pedidos selecionados: {len(selected_orders)}"),
             *[ft.Text(f"• Pedido #{order['id']} — {order.get('numero_pedido') or '-'}") for order in selected_orders],
             ft.Divider(),
-            ft.Text("Pontos de coleta", weight=ft.FontWeight.BOLD),
-            *([ft.Text(f"• {org['nome']}") for org in selected_orgs] or [ft.Text("Nenhum ponto de coleta selecionado.")]),
+            ft.Text("Ponto de coleta detectado", weight=ft.FontWeight.BOLD),
+            ft.Text(f"Organização: {detected_org.get('nome') if detected_org else 'Nenhuma organização detectada.'}"),
+            ft.Text(f"Origem: {origin_summary}"),
+            ft.Text(f"Pedidos: {len(selected_orders)}"),
             ft.Divider(),
             ft.Text("Use este formulário para gerar rotas otimizadas via POST /rotas/gerar."),
         ], spacing=8, tight=True)
@@ -1060,16 +1087,12 @@ class DeliveryApp:
                             ft.FilledButton("Limpar seleção", on_click=lambda _: self._clear_selected_orders()),
                         ], spacing=12),
                         ft.Divider(),
-                        ft.Text("Pontos de coleta", weight=ft.FontWeight.BOLD, size=18),
-                        ft.Row([collection_dropdown, ft.FilledButton("Adicionar", on_click=add_collection)], spacing=12),
-                        ft.Column(selected_collection_tiles or [ft.Text("Nenhum ponto de coleta selecionado.")], spacing=6),
-                        ft.Divider(),
                         ft.Text("Atribuição opcional", weight=ft.FontWeight.BOLD, size=18),
                         ft.Row([driver_dropdown, vehicle_dropdown], spacing=12),
                         ft.Divider(),
-                        ft.FilledButton("Gerar Rota Otimizada", icon=ft.Icons.ROUTE, on_click=generate, disabled=not bool(selected_order_ids and selected_collection_ids)),
+                        ft.FilledButton("Gerar Rota Otimizada", icon=ft.Icons.ROUTE, on_click=generate, disabled=not bool(selected_order_ids)),
                         ft.Text(
-                            "Selecione ao menos um pedido e um ponto de coleta para habilitar a geração de rota." if not (selected_order_ids and selected_collection_ids) else "",
+                            "Selecione ao menos um pedido para habilitar a geração de rota." if not selected_order_ids else "",
                             color=ft.Colors.ORANGE_700,
                         ),
                     ], spacing=12),
