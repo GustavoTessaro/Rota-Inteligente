@@ -405,7 +405,7 @@ class DeliveryApp:
 
     def dashboard_view(self):
         if self.user["perfil"] == "MOTORISTA":
-            self.deliveries_view()
+            self.driver_dashboard_view()
             return
         try:
             data = self.dashboard_data or self.api.request("GET", "/relatorios/dashboard")
@@ -550,6 +550,324 @@ class DeliveryApp:
             self.page.update()
         except ApiError as exc:
             self.notify(str(exc), True)
+
+    # ===================================================================
+    # Phase 2: Driver Dashboard
+    # ===================================================================
+
+    def driver_dashboard_view(self):
+        """
+        Dashboard exclusivo para motoristas.
+        Exibe saudação, veículo, indicadores e próxima missão.
+        """
+        try:
+            # Buscar rota ativa do motorista (Phase 1 endpoint)
+            current_route = None
+            try:
+                current_route = self.api.request("GET", "/rotas/motorista/atual")
+            except ApiError as exc:
+                # 404 é esperado se não há rota ativa
+                if "404" not in str(exc).lower():
+                    raise
+
+            # Montar componentes
+            greeting_card = self._build_driver_greeting()
+            vehicle_card = self._build_driver_vehicle_card(current_route)
+            indicator_cards = self._build_driver_indicators(current_route)
+            mission_card = self._build_driver_mission_card(current_route)
+
+            # Atualizar view
+            self.content.controls = [
+                self.header_bar("Dashboard", "Sua operação de hoje"),
+                greeting_card,
+                vehicle_card,
+                ft.Container(ft.Row(indicator_cards, wrap=True, spacing=12), padding=20),
+                mission_card,
+            ]
+            self.page.update()
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
+    def _get_greeting_time(self) -> tuple:
+        """
+        Retorna (saudação, período) baseado na hora atual.
+        Ex: ("Bom dia", "⛅"), ("Boa tarde", "☀️"), ("Boa noite", "🌙")
+        """
+        hour = datetime.now().hour
+        if hour < 12:
+            return "Bom dia", "⛅"
+        elif hour < 18:
+            return "Boa tarde", "☀️"
+        else:
+            return "Boa noite", "🌙"
+
+    def _build_driver_greeting(self) -> ft.Container:
+        """
+        Card de saudação com nome, data e emoticon de período.
+        """
+        greeting, emoji = self._get_greeting_time()
+        today = datetime.now().strftime("%A, %d de %B de %Y")
+        driver_name = self.user.get("nome", "Motorista")
+
+        # Localizar nome do dia em português
+        days_pt = {
+            "Monday": "segunda-feira",
+            "Tuesday": "terça-feira",
+            "Wednesday": "quarta-feira",
+            "Thursday": "quinta-feira",
+            "Friday": "sexta-feira",
+            "Saturday": "sábado",
+            "Sunday": "domingo",
+        }
+        months_pt = {
+            "January": "janeiro",
+            "February": "fevereiro",
+            "March": "março",
+            "April": "abril",
+            "May": "maio",
+            "June": "junho",
+            "July": "julho",
+            "August": "agosto",
+            "September": "setembro",
+            "October": "outubro",
+            "November": "novembro",
+            "December": "dezembro",
+        }
+        now = datetime.now()
+        day_name = days_pt.get(now.strftime("%A"), now.strftime("%A"))
+        month_name = months_pt.get(now.strftime("%B"), now.strftime("%B"))
+        today_pt = f"{day_name.capitalize()}, {now.day} de {month_name} de {now.year}"
+
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Column([
+                        ft.Text(f"{greeting}, {driver_name}!", size=24, weight=ft.FontWeight.BOLD),
+                        ft.Text(today_pt, size=14, color=ft.Colors.GREY_700),
+                    ], spacing=4),
+                    ft.Text(emoji, size=32),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.START),
+            ]),
+            padding=20,
+            border_radius=14,
+            bgcolor=ft.Colors.INDIGO_50,
+        )
+
+    def _build_driver_vehicle_card(self, current_route) -> ft.Container:
+        """
+        Card com informações do veículo vinculado à rota ativa.
+        Se não há rota ativa, mostra placeholder.
+        """
+        vehicle_info = "--"
+        if current_route and current_route.get("veiculo"):
+            veiculo = current_route["veiculo"]
+            placa = veiculo.get("placa", "--")
+            modelo = veiculo.get("modelo", "--")
+            vehicle_info = f"{modelo} ({placa})"
+
+        return ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.DIRECTIONS_CAR, size=28, color=ft.Colors.INDIGO),
+                ft.Column([
+                    ft.Text("Veículo", size=12, color=ft.Colors.GREY_700),
+                    ft.Text(vehicle_info, size=14, weight=ft.FontWeight.BOLD),
+                ], spacing=2),
+            ], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=16,
+            margin=ft.margin.symmetric(horizontal=20, vertical=10),
+            border_radius=12,
+            bgcolor=ft.Colors.WHITE,
+            border=ft.border.all(1, ft.Colors.GREY_300),
+        )
+
+    def _build_driver_indicators(self, current_route) -> list:
+        """
+        Retorna lista com 4 cards de indicadores:
+        1. Entregas concluídas hoje
+        2. Entregas pendentes
+        3. Distância prevista (da rota atual)
+        4. Tempo previsto (da rota atual)
+        
+        Se dados não disponíveis, usa fallback "--".
+        """
+        indicators = [
+            {"label": "Concluídas hoje", "value": "--", "icon": ft.Icons.CHECK_CIRCLE, "color": ft.Colors.GREEN},
+            {"label": "Pendentes", "value": "--", "icon": ft.Icons.PENDING_ACTIONS, "color": ft.Colors.ORANGE},
+            {"label": "Distância", "value": "--", "icon": ft.Icons.ROUTE, "color": ft.Colors.BLUE},
+            {"label": "Tempo", "value": "--", "icon": ft.Icons.SCHEDULE, "color": ft.Colors.PURPLE},
+        ]
+
+        # Extrair valores da rota se disponível
+        if current_route:
+            # Distância e duração da rota atual
+            distance = current_route.get("distancia_km")
+            duration = current_route.get("duracao_minutos")
+
+            if distance is not None:
+                indicators[2]["value"] = f"{distance:.1f} km"
+            if duration is not None:
+                hours = duration // 60
+                minutes = duration % 60
+                if hours > 0:
+                    indicators[3]["value"] = f"{hours}h {minutes}m"
+                else:
+                    indicators[3]["value"] = f"{minutes}m"
+
+            # Contar entregas concluídas e pendentes
+            entregas = current_route.get("entregas", [])
+            if entregas:
+                completed = sum(1 for e in entregas if e.get("status") == "ENTREGUE")
+                pending = len(entregas) - completed
+                indicators[0]["value"] = str(completed)
+                indicators[1]["value"] = str(pending)
+
+        # Montar cards
+        cards = []
+        for ind in indicators:
+            card = ft.Container(
+                content=ft.Column([
+                    ft.Icon(ind["icon"], size=24, color=ind["color"]),
+                    ft.Text(str(ind["value"]), size=20, weight=ft.FontWeight.BOLD),
+                    ft.Text(ind["label"], size=12, color=ft.Colors.GREY_700),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),
+                padding=16,
+                width=160,
+                border_radius=12,
+                bgcolor=ft.Colors.WHITE,
+                border=ft.border.all(1, ft.Colors.GREY_300),
+            )
+            cards.append(card)
+
+        return cards
+
+    def _build_driver_mission_card(self, current_route) -> ft.Container:
+        """
+        Card principal "Próxima Missão" com dados da rota ativa.
+        Contém botão "Iniciar Rota" com navegação placeholder para Phase 3.
+        
+        Estrutura pronta para receber em Phase 3:
+        - Mapa da rota
+        - Sequência de carregamento
+        - Navegação turn-by-turn
+        - Atualização de status
+        """
+        def handle_start_route(_):
+            """
+            Placeholder para Phase 3: Rota Ativa.
+            Aqui será implementada navegação para driver_route_view().
+            """
+            if not current_route:
+                self.notify("Nenhuma rota ativa para iniciar.", True)
+                return
+
+            # Phase 3: Descomentar e implementar navegação
+            # self.driver_route_view(current_route["id"])
+            self.notify("Phase 3 - Rota Ativa (em desenvolvimento)", False)
+
+        if not current_route:
+            # Rota não disponível
+            mission_content = ft.Column([
+                ft.Icon(ft.Icons.TRIP_ORIGIN, size=48, color=ft.Colors.GREY_400),
+                ft.Text("Nenhuma rota ativa", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text("Aguarde até que uma rota seja atribuída a você.", color=ft.Colors.GREY_700),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12)
+        else:
+            # Rota ativa disponível
+            route_id = current_route.get("id", "--")
+            route_name = current_route.get("nome", "--")
+            status = current_route.get("status", "--").replace("_", " ")
+            
+            # Organização (ponto de coleta)
+            org_name = "--"
+            if current_route.get("organizacao"):
+                org_name = current_route["organizacao"].get("nome", "--")
+            
+            # Entregas
+            entregas = current_route.get("entregas", [])
+            num_entregas = len(entregas)
+            
+            # Próxima entrega pendente
+            proxima_entrega_text = "Nenhuma entrega pendente"
+            for entrega in entregas:
+                if entrega.get("status") not in {"ENTREGUE", "CANCELADA"}:
+                    # Extrair informações
+                    endereco = entrega.get("endereco_destino_id", "--")
+                    proxima_entrega_text = f"Entrega #{entrega.get('id', '--')}"
+                    break
+            
+            # Distância e duração
+            distance = current_route.get("distancia_km", "--")
+            duration = current_route.get("duracao_minutos", "--")
+            if duration != "--":
+                hours = int(duration) // 60
+                minutes = int(duration) % 60
+                duration = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+            else:
+                duration = "--"
+
+            mission_content = ft.Column([
+                ft.Row([
+                    ft.Column([
+                        ft.Text("Operação", size=12, color=ft.Colors.GREY_700),
+                        ft.Text(org_name, size=16, weight=ft.FontWeight.BOLD),
+                    ]),
+                    ft.Text(f"{num_entregas} entrega(s)", weight=ft.FontWeight.BOLD),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Divider(height=10),
+                ft.Column([
+                    ft.Text("Próxima entrega", size=12, color=ft.Colors.GREY_700),
+                    ft.Text(proxima_entrega_text, size=14, weight=ft.FontWeight.BOLD),
+                ], spacing=2),
+                ft.Row([
+                    ft.Column([
+                        ft.Text("Distância", size=12, color=ft.Colors.GREY_700),
+                        ft.Text(f"{distance} km" if distance != "--" else "--", weight=ft.FontWeight.BOLD),
+                    ]),
+                    ft.Column([
+                        ft.Text("Duração", size=12, color=ft.Colors.GREY_700),
+                        ft.Text(duration, weight=ft.FontWeight.BOLD),
+                    ]),
+                    ft.Column([
+                        ft.Text("Status", size=12, color=ft.Colors.GREY_700),
+                        ft.Text(status, weight=ft.FontWeight.BOLD, color=ft.Colors.INDIGO),
+                    ]),
+                ], spacing=20),
+                ft.Divider(height=10),
+                ft.Row([
+                    ft.FilledButton(
+                        "Iniciar Rota",
+                        icon=ft.Icons.PLAY_ARROW,
+                        on_click=handle_start_route,
+                        expand=True,
+                    ),
+                ]),
+            ], spacing=12)
+
+        return ft.Container(
+            content=mission_content,
+            padding=20,
+            margin=ft.margin.symmetric(horizontal=20, vertical=10),
+            border_radius=14,
+            bgcolor=ft.Colors.WHITE,
+            shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+        )
+
+    # ===================================================================
+    # Phase 3: Driver Route View (Placeholder)
+    # ===================================================================
+    # def driver_route_view(self, route_id: int):
+    #     """
+    #     Tela de rota ativa para o motorista.
+    #     
+    #     Será implementada na Phase 3 com:
+    #     - Mapa interativo com rota e marcadores
+    #     - Sequência de carregamento/entrega
+    #     - Turn-by-turn navigation
+    #     - Botões para pausar/retomar/finalizar rota
+    #     - Atualização de status de entregas
+    #     - Notificações de próximas paradas
+    #     """
+    #     pass
 
     def deliveries_view(self, offset=0, status_filter=""):
         page_size = 10
