@@ -559,6 +559,8 @@ class DeliveryApp:
         """
         Dashboard exclusivo para motoristas.
         Exibe saudação, veículo, indicadores e próxima missão.
+        
+        Suporta estado vazio quando motorista não tem rota atribuída (404).
         """
         try:
             # Buscar rota ativa do motorista (Phase 1 endpoint)
@@ -566,11 +568,14 @@ class DeliveryApp:
             try:
                 current_route = self.api.request("GET", "/rotas/motorista/atual")
             except ApiError as exc:
-                # 404 é esperado se não há rota ativa
-                if "404" not in str(exc).lower():
+                error_str = str(exc).lower()
+                # 404 é esperado e normal quando motorista não tem rota ativa
+                if "404" not in error_str and "nenhuma rota" not in error_str:
+                    # Só relança se for outro tipo de erro (não 404)
                     raise
+                # Se for 404, continua normalmente com current_route = None
 
-            # Montar componentes
+            # Montar componentes (funcionam com current_route=None)
             greeting_card = self._build_driver_greeting()
             vehicle_card = self._build_driver_vehicle_card(current_route)
             indicator_cards = self._build_driver_indicators(current_route)
@@ -586,6 +591,7 @@ class DeliveryApp:
             ]
             self.page.update()
         except ApiError as exc:
+            # Erro real (não 404)
             self.notify(str(exc), True)
 
     def _get_greeting_time(self) -> tuple:
@@ -765,11 +771,11 @@ class DeliveryApp:
             self.notify("Phase 3 - Rota Ativa (em desenvolvimento)", False)
 
         if not current_route:
-            # Rota não disponível
+            # Rota não disponível - estado vazio
             mission_content = ft.Column([
                 ft.Icon(ft.Icons.TRIP_ORIGIN, size=48, color=ft.Colors.GREY_400),
-                ft.Text("Nenhuma rota ativa", size=16, weight=ft.FontWeight.BOLD),
-                ft.Text("Aguarde até que uma rota seja atribuída a você.", color=ft.Colors.GREY_700),
+                ft.Text("Nenhuma rota atribuída no momento", size=16, weight=ft.FontWeight.BOLD),
+                ft.Text("Sua rota será preparada em breve.", color=ft.Colors.GREY_700),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12)
         else:
             # Rota ativa disponível

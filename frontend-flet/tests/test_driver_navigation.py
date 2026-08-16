@@ -241,6 +241,60 @@ def test_mission_card_no_route():
     print("✓ Card de missão mostra placeholder quando não há rota")
 
 
+def test_driver_dashboard_handles_404_no_route():
+    """
+    REGRESSÃO: Testa que motorista sem rota consegue abrir Dashboard sem erro.
+    
+    Bug: Quando GET /rotas/motorista/atual retorna 404, o Dashboard
+    mostrava erro ao usuário. Agora deve renderizar em estado vazio.
+    """
+    from app.application import DeliveryApp, ApiError
+    
+    # Criar mock de página Flet
+    mock_page = MagicMock(spec=ft.Page)
+    
+    # Criar app
+    app = DeliveryApp(mock_page)
+    app.user = {"nome": "Gustavo"}
+    app.content = MagicMock(spec=ft.Column)
+    app.page = mock_page
+    
+    # Mock ApiClient que retorna 404 para /rotas/motorista/atual
+    mock_api = MagicMock()
+    
+    def request_404(method, path, json=None):
+        if method == "GET" and path == "/rotas/motorista/atual":
+            # Simular resposta 404 do backend
+            raise ApiError("404 Not Found: Nenhuma rota ativa para este motorista")
+        raise Exception(f"Unexpected call: {method} {path}")
+    
+    mock_api.request = request_404
+    app.api = mock_api
+    
+    # Mock notify para rastrear se erro foi mostrado
+    app.notify = MagicMock()
+    
+    # Chamar driver_dashboard_view (não deve lançar exceção)
+    try:
+        app.driver_dashboard_view()
+    except Exception as e:
+        raise AssertionError(
+            f"driver_dashboard_view lançou exceção com motorista sem rota: {e}"
+        )
+    
+    # Verificar que content.controls foi atualizado
+    assert app.content.controls is not None or app.content.controls != [], \
+        "Dashboard não atualizou os controles"
+    
+    # Verificar que notify(error=True) NÃO foi chamado
+    error_calls = [call for call in app.notify.call_args_list 
+                   if len(call[0]) > 1 and call[0][1] == True]
+    assert len(error_calls) == 0, \
+        f"notify(error=True) foi chamado {len(error_calls)} vez(es), esperado 0. Motorista sem rota não deve ver erro."
+    
+    print("✓ Dashboard não mostra erro quando motorista não tem rota (404 tratado corretamente)")
+
+
 if __name__ == "__main__":
     print("\n" + "="*70)
     print("Phase 2 - Testes de Navegação do Motorista")
@@ -254,6 +308,7 @@ if __name__ == "__main__":
         test_greeting_time_logic()
         test_indicators_with_no_route()
         test_mission_card_no_route()
+        test_driver_dashboard_handles_404_no_route()  # REGRESSÃO - bug fix
         
         print("\n" + "="*70)
         print("✓ TODOS OS TESTES PASSARAM!")
