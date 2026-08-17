@@ -172,6 +172,41 @@ def test_get_sequencia_carregamento_returns_404_for_missing_route(client: TestCl
     assert response.status_code == 404, response.text
 
 
+def test_driver_can_start_own_route(client: TestClient, admin_headers: dict) -> None:
+    users = client.get("/api/usuarios?limit=100&offset=0", headers=admin_headers).json()
+    driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
+    driver_headers = _login(client, driver["email"])
+    orgs = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()
+    org = orgs[0]
+    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
+    selected = next(item for item in deliveries if item["status"] != "CANCELADA")
+
+    route_response = client.post(
+        "/api/rotas/gerar",
+        headers=admin_headers,
+        json={
+            "nome": "Rota do motorista pronta",
+            "organizacao_id": org["id"],
+            "motorista_id": driver["id"],
+            "veiculo_id": None,
+            "status": "PRONTA",
+            "pedido_ids": [selected["pedido_id"]],
+            "pontos_coleta_ids": [org["id"]],
+        },
+    )
+    assert route_response.status_code == 201, route_response.text
+    route_id = route_response.json()["id"]
+
+    response = client.patch(
+        f"/api/rotas/{route_id}/status",
+        headers=driver_headers,
+        json={"status": "EM_EXECUCAO", "evento": "PARTIDA", "observacao": "Iniciei a rota"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "EM_EXECUCAO"
+    assert response.json()["motorista_id"] == driver["id"]
+
+
 def test_get_motorista_rota_atual_prefers_em_execucao_over_other_statuses(client: TestClient, admin_headers: dict) -> None:
     users = client.get("/api/usuarios?limit=100&offset=0", headers=admin_headers).json()
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])

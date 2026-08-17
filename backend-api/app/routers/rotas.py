@@ -581,7 +581,7 @@ def update_route_status(
     rota_id: int,
     data: RotaStatusIn,
     db: Session = Depends(get_db),
-    user: Usuario = Depends(staff),
+    user: Usuario = Depends(current_user),
 ):
     rota = get_or_404(db, Rota, rota_id)
     ensure_route_access_scope(user, rota)
@@ -590,18 +590,26 @@ def update_route_status(
     if data.status == StatusRota.CANCELADA and rota.status == StatusRota.FINALIZADA:
         raise HTTPException(422, "Rota finalizada não pode ser cancelada")
     if data.status == StatusRota.EM_EXECUCAO:
-        if rota.veiculo_id is None:
-            raise HTTPException(422, "Rota precisa de um veículo associado para iniciar")
         if rota.motorista_id is None:
             raise HTTPException(422, "Rota precisa de um motorista associado para iniciar")
-        vehicle = get_or_404(db, Veiculo, rota.veiculo_id)
         driver = get_or_404(db, Usuario, rota.motorista_id)
-        if vehicle.organizacao_id != rota.organizacao_id:
-            raise HTTPException(422, "Veículo associado não pertence à organização da rota")
         if driver.perfil != Perfil.MOTORISTA or not driver.ativo:
             raise HTTPException(422, "Motorista associado deve estar ativo e com perfil MOTORISTA")
-        if vehicle.motorista_id is not None and vehicle.motorista_id != driver.id:
-            raise HTTPException(422, "Veículo associado deve estar compatível com o motorista da rota")
+
+        if user.perfil == Perfil.MOTORISTA and rota.motorista_id != user.id:
+            raise HTTPException(403, "Acesso negado à rota de outro motorista")
+
+        if rota.veiculo_id is None:
+            if user.perfil != Perfil.MOTORISTA or rota.motorista_id != user.id:
+                raise HTTPException(422, "Rota precisa de um veículo associado para iniciar")
+        else:
+            vehicle = get_or_404(db, Veiculo, rota.veiculo_id)
+            if vehicle.organizacao_id != rota.organizacao_id:
+                raise HTTPException(422, "Veículo associado não pertence à organização da rota")
+            if user.perfil == Perfil.MOTORISTA and vehicle.motorista_id is not None and vehicle.motorista_id != driver.id:
+                raise HTTPException(422, "Veículo associado deve estar compatível com o motorista da rota")
+            if user.perfil != Perfil.MOTORISTA and vehicle.motorista_id is not None and vehicle.motorista_id != driver.id:
+                raise HTTPException(422, "Veículo associado deve estar compatível com o motorista da rota")
     if data.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA} and rota.status not in {
         StatusRota.EM_EXECUCAO,
         StatusRota.PAUSADA,

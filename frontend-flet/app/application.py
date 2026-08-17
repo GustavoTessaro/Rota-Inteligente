@@ -758,17 +758,17 @@ class DeliveryApp:
         - Atualização de status
         """
         def handle_start_route(_):
-            """
-            Placeholder para Phase 3: Rota Ativa.
-            Aqui será implementada navegação para driver_route_view().
-            """
+            print("DEBUG handle_start_route current_route=", current_route)
             if not current_route:
+                print("DEBUG handle_start_route sem rota ativa")
                 self.notify("Nenhuma rota ativa para iniciar.", True)
                 return
-
-            # Phase 3: Descomentar e implementar navegação
-            # self.driver_route_view(current_route["id"])
-            self.notify("Phase 3 - Rota Ativa (em desenvolvimento)", False)
+            try:
+                print("DEBUG handle_start_route abrindo driver_route_view route_id=", current_route.get("id"))
+                self.driver_route_view(current_route.get("id"))
+            except Exception as exc:
+                print("DEBUG handle_start_route erro=", exc)
+                self.notify("Não foi possível abrir a rota ativa.", True)
 
         if not current_route:
             # Rota não disponível - estado vazio
@@ -782,38 +782,31 @@ class DeliveryApp:
             route_id = current_route.get("id", "--")
             route_name = current_route.get("nome", "--")
             status = current_route.get("status", "--").replace("_", " ")
-            
-            # Organização (ponto de coleta)
-            org_name = "--"
+
             organization = current_route.get("organizacao") or current_route.get("origem") or {}
-            if isinstance(organization, dict):
-                org_name = organization.get("nome") or organization.get("nome", "--")
-            if not org_name or org_name == "--":
+            org_name = organization.get("nome") if isinstance(organization, dict) else "Operação não informada"
+            if not org_name:
                 org_name = "Operação não informada"
-            
-            # Entregas
+
             entregas = current_route.get("entregas", [])
             num_entregas = len(entregas)
-            
-            # Próxima parada real da rota (usa a primeira entrega pendente com endereço)
+
             proxima_entrega_text = "Nenhuma entrega pendente"
-            next_delivery = None
+            next_stop = None
             for entrega in entregas:
                 if entrega.get("status") not in {"ENTREGUE", "CANCELADA"}:
-                    next_delivery = entrega
+                    next_stop = entrega
                     break
 
-            if next_delivery:
-                next_destino = next_delivery.get("destino") or {}
+            if next_stop:
+                destino = next_stop.get("destino") or {}
                 next_address = (
-                    next_destino.get("endereco_formatado")
-                    or next_delivery.get("endereco_destino_formatado")
-                    or next_destino.get("logradouro")
+                    destino.get("endereco_formatado")
+                    or next_stop.get("endereco_destino_formatado")
+                    or destino.get("logradouro")
+                    or "Endereço não informado"
                 )
-                if next_address:
-                    proxima_entrega_text = next_address
-                else:
-                    proxima_entrega_text = f"Entrega #{next_delivery.get('id', '--')}"
+                proxima_entrega_text = next_address
             
             # Distância e duração (previstos do backend)
             # Backend retorna: distancia_prevista (float em km), duracao_prevista (float em horas)
@@ -882,21 +875,227 @@ class DeliveryApp:
         )
 
     # ===================================================================
-    # Phase 3: Driver Route View (Placeholder)
+    # Phase 3: Driver Route View
     # ===================================================================
-    # def driver_route_view(self, route_id: int):
-    #     """
-    #     Tela de rota ativa para o motorista.
-    #     
-    #     Será implementada na Phase 3 com:
-    #     - Mapa interativo com rota e marcadores
-    #     - Sequência de carregamento/entrega
-    #     - Turn-by-turn navigation
-    #     - Botões para pausar/retomar/finalizar rota
-    #     - Atualização de status de entregas
-    #     - Notificações de próximas paradas
-    #     """
-    #     pass
+    def driver_route_view(self, route_id: int | None = None, loading_confirmed: bool = False):
+        """
+        Tela da rota ativa para o motorista.
+        Exibe a rota, o mapa, próxima parada real e sequência de entregas com dados reais de cliente e endereço.
+        """
+        print("DEBUG driver_route_view INICIO route_id=", route_id, "loading_confirmed=", loading_confirmed)
+        try:
+            # Motorista deve sempre seguir o payload enriquecido da rota ativa do próprio motorista.
+            # O endpoint /rotas/{id} não traz os dados completos da rota do motorista em forma de payload
+            # compatível com a tela de Rota Ativa (route_geometry + entregas detalhadas + cliente/endereço).
+            if self.user.get("perfil") == "MOTORISTA":
+                print("DEBUG driver_route_view buscando /rotas/motorista/atual")
+                route = self.api.request("GET", "/rotas/motorista/atual")
+                route_id = route.get("id")
+            elif route_id is None:
+                print("DEBUG driver_route_view buscando /rotas/motorista/atual")
+                route = self.api.request("GET", "/rotas/motorista/atual")
+                route_id = route.get("id")
+            else:
+                print("DEBUG driver_route_view buscando /rotas/{route_id}", route_id)
+                route = self.api.request("GET", f"/rotas/{route_id}")
+
+            if not route:
+                print("DEBUG driver_route_view rota vazia")
+                self.notify("Nenhuma rota ativa encontrada.", True)
+                return
+
+            print("DEBUG driver_route_view route_status=", route.get("status"), "route_keys=", sorted(route.keys())[:20])
+
+            # Obter dados reais de cliente e endereço para cada parada
+            stops = self._driver_route_snapshot(route)
+            next_stop = self._next_driver_stop(route)
+            route_status = route.get("status", "PRONTA")
+            print("DEBUG driver_route_view stops=", len(stops), "next_stop=", bool(next_stop), "next_name=", next_stop.get("cliente", {}).get("nome") if next_stop else None)
+
+            # Mapa com polyline da rota
+            operation_name = (route.get("organizacao") or {}).get("nome") or "Operação não informada"
+            map_control = MapView(title=operation_name, height=280, width=920)
+            map_control = map_control.build()
+            encoded = route.get("route_geometry") or route.get("routeGeometry")
+            print("DEBUG driver_route_view geometry_present=", bool(encoded), "geometry_len=", len(encoded) if encoded else 0)
+            if encoded:
+                try:
+                    map_control.draw_polyline(encoded)
+                    print("DEBUG driver_route_view polyline desenhado")
+                except Exception as exc:
+                    print("DEBUG driver_route_view erro no draw_polyline=", exc)
+                    pass
+
+            if stops:
+                markers = []
+                for index, stop in enumerate(stops, start=1):
+                    address = stop.get("address") or {}
+                    lat = address.get("latitude")
+                    lng = address.get("longitude")
+                    if lat is None or lng is None:
+                        continue
+                    markers.append({
+                        "id": f"stop-{index}",
+                        "lat": float(lat),
+                        "lng": float(lng),
+                        "title": f"{index}",
+                        "label": str(index),
+                    })
+                if markers:
+                    map_control.set_markers(markers)
+
+            # Cards de paradas com dados reais de cliente e endereço
+            stop_cards = []
+            for index, stop in enumerate(stops, start=1):
+                delivery = stop.get("delivery", {})
+                cliente = stop.get("cliente", {})
+                address = stop.get("address", {})
+                is_next = next_stop and stop["delivery"]["id"] == next_stop["delivery"]["id"]
+                delivery_status = delivery.get("status", "AGUARDANDO_COLETA")
+
+                client_name = self._driver_stop_label(stop)
+                formatted_address = self._driver_stop_address(stop)
+
+                stop_cards.append(
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Container(
+                                content=ft.Text(str(index), size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                                width=38,
+                                height=38,
+                                alignment=ft.alignment.center,
+                                border_radius=19,
+                                bgcolor=ft.Colors.INDIGO if is_next else ft.Colors.GREY_400,
+                            ),
+                            ft.Column([
+                                ft.Text(f"Parada {index}: {client_name}", size=12, weight=ft.FontWeight.BOLD),
+                                ft.Text(formatted_address, size=11, color=ft.Colors.GREY_700),
+                                ft.Text(f"Pedido: #{delivery.get('pedido_id', '--')}  •  {delivery_status.replace('_', ' ')}", size=10, color=ft.Colors.GREY_600),
+                            ], spacing=2, expand=True),
+                        ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        padding=14,
+                        border_radius=12,
+                        bgcolor=ft.Colors.INDIGO_50 if is_next else ft.Colors.WHITE,
+                        border=ft.border.all(1, ft.Colors.INDIGO if is_next else ft.Colors.GREY_300),
+                        margin=ft.margin.only(bottom=8),
+                    )
+                )
+
+            # Botões contextuais por status
+            action_buttons = []
+            if route_status in {"PRONTA", "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO"}:
+                action_buttons.append(
+                    ft.FilledButton(
+                        "Verificar carga",
+                        icon=ft.Icons.CHECKLIST,
+                        expand=True,
+                        on_click=lambda _: self.loading_order_dialog(route, stops),
+                    )
+                )
+                
+                start_button = ft.FilledButton(
+                    "Iniciar viagem",
+                    icon=ft.Icons.PLAY_ARROW,
+                    expand=True,
+                    disabled=not loading_confirmed,
+                    on_click=lambda _: self._start_route_execution(route),
+                )
+                action_buttons.append(start_button)
+                
+                if loading_confirmed:
+                    action_buttons.append(
+                        ft.OutlinedButton(
+                            "Editar carga",
+                            icon=ft.Icons.EDIT,
+                            expand=True,
+                            on_click=lambda _: self.driver_route_view(route_id, False),
+                        )
+                    )
+            elif route_status == "EM_EXECUCAO":
+                action_buttons.append(
+                    ft.FilledButton(
+                        "Pausar rota",
+                        icon=ft.Icons.PAUSE,
+                        expand=True,
+                        on_click=lambda _: self.change_route_status(route, "PAUSADA", event="PAUSA", observation="Pausada pelo motorista", stay_in_view=True),
+                    )
+                )
+                action_buttons.append(
+                    ft.OutlinedButton(
+                        "Próxima entrega",
+                        icon=ft.Icons.DONE_OUTLINE,
+                        expand=True,
+                        on_click=lambda _: self._complete_next_delivery(route, next_stop),
+                    )
+                )
+            elif route_status == "PAUSADA":
+                action_buttons.append(
+                    ft.FilledButton(
+                        "Retomar rota",
+                        icon=ft.Icons.PLAY_ARROW,
+                        expand=True,
+                        on_click=lambda _: self.change_route_status(route, "EM_EXECUCAO", event="RETOMADA", observation="Retomada pelo motorista", stay_in_view=True),
+                    )
+                )
+            elif route_status not in {"FINALIZADA", "CANCELADA"}:
+                action_buttons.append(
+                    ft.OutlinedButton(
+                        "Finalizar rota",
+                        icon=ft.Icons.FLAG,
+                        expand=True,
+                        on_click=lambda _: self.change_route_status(route, "FINALIZADA", event="FINALIZADA", observation="Finalizada pelo motorista", stay_in_view=True),
+                    )
+                )
+
+            # Próxima parada real
+            next_stop_text = "Nenhuma entrega pendente"
+            next_stop_address = "-"
+            if next_stop:
+                next_stop_text = self._driver_stop_label(next_stop)
+                next_stop_address = self._driver_stop_address(next_stop)
+
+            self.content.controls = [
+                self.header_bar("Rota Ativa", f"#{route.get('id')} · {route.get('nome', 'Rota')}", actions=[
+                    ft.TextButton("Voltar", icon=ft.Icons.ARROW_BACK, on_click=lambda _: self.dashboard_view()),
+                ]),
+                ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Column([
+                                ft.Text("Status", size=12, color=ft.Colors.GREY_700),
+                                ft.Text(route_status.replace("_", " "), size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.INDIGO),
+                            ]),
+                            ft.Column([
+                                ft.Text("Próxima parada", size=12, color=ft.Colors.GREY_700),
+                                ft.Text(next_stop_text, size=14, weight=ft.FontWeight.BOLD),
+                            ], expand=True),
+                        ], spacing=24),
+                        ft.Text(next_stop_address, size=11, color=ft.Colors.GREY_600, selectable=True),
+                        ft.Divider(height=16),
+                        map_control,
+                        *([ft.Divider(height=10)] if action_buttons else []),
+                        *([ft.Column(action_buttons, spacing=12)] if action_buttons else []),
+                    ], spacing=12),
+                    padding=20,
+                    border_radius=14,
+                    bgcolor=ft.Colors.WHITE,
+                    shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+                ),
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Sequência de entregas", size=18, weight=ft.FontWeight.BOLD),
+                        *(stop_cards if stop_cards else [ft.Text("Nenhuma entrega nesta rota.", color=ft.Colors.GREY_600)]),
+                    ], tight=True),
+                    padding=20,
+                    margin=ft.margin.only(top=10),
+                    border_radius=14,
+                    bgcolor=ft.Colors.WHITE,
+                    shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+                ),
+            ]
+            self.page.update()
+        except ApiError as exc:
+            self.notify(str(exc), True)
 
     def deliveries_view(self, offset=0, status_filter=""):
         page_size = 10
@@ -1102,10 +1301,52 @@ class DeliveryApp:
             int(item.get("entrega_id") or item.get("id") or 0),
         ))
 
-    def _driver_route_snapshot(self, route):
+    @staticmethod
+    def _driver_route_payload_snapshot(route):
         snapshot = []
-        for entry in self._sorted_route_entries(route):
-            delivery_id = entry.get("entrega_id")
+        entries = list(route.get("entregas") or [])
+        if not entries and route.get("proxima_entrega"):
+            entries = [route.get("proxima_entrega")]
+
+        for entry in sorted(entries, key=lambda item: (
+            int(item.get("sequencia_otimizada") or item.get("ordem_visita") or 0),
+            int(item.get("entrega_id") or item.get("id") or 0),
+        )):
+            delivery_id = entry.get("entrega_id") or entry.get("id")
+            if delivery_id is None:
+                continue
+
+            delivery = {
+                "id": delivery_id,
+                "pedido_id": entry.get("pedido_id"),
+                "status": entry.get("status") or "AGUARDANDO_COLETA",
+            }
+            address = entry.get("destino") or entry.get("address") or {}
+            cliente = {"nome": f"Pedido #{entry.get('pedido_id')}" if entry.get("pedido_id") is not None else f"Entrega #{delivery_id}"}
+            snapshot.append({
+                "entry": entry,
+                "delivery": delivery,
+                "cliente": cliente,
+                "address": address,
+                "order": int(entry.get("sequencia_otimizada") or entry.get("ordem_visita") or 0),
+            })
+        return snapshot
+
+    def _driver_route_snapshot(self, route):
+        payload_snapshot = self._driver_route_payload_snapshot(route)
+        if payload_snapshot:
+            return payload_snapshot
+
+        snapshot = []
+        entries = list(route.get("entregas") or [])
+        if not entries:
+            try:
+                entries = self.api.request("GET", f"/rotas/{route['id']}/sequencia-carregamento")
+            except ApiError:
+                return []
+
+        for entry in self._sorted_route_entries({"entregas": entries}):
+            delivery_id = entry.get("entrega_id") or entry.get("id")
             if delivery_id is None:
                 continue
             try:
@@ -1113,7 +1354,13 @@ class DeliveryApp:
                 pedido = self.api.request("GET", f"/pedidos/{delivery['pedido_id']}")
                 cliente = self.api.request("GET", f"/clientes/{pedido['cliente_id']}")
                 addresses = self.api.request("GET", f"/clientes/{pedido['cliente_id']}/enderecos")
-                address = next((item for item in addresses if item["id"] == delivery["endereco_destino_id"]), None)
+                address = None
+                if delivery.get("endereco_destino_id") is not None:
+                    address = next((item for item in addresses if item["id"] == delivery.get("endereco_destino_id")), None)
+                if address is None and pedido.get("endereco_entrega_id") is not None:
+                    address = next((item for item in addresses if item["id"] == pedido.get("endereco_entrega_id")), None)
+                if address is None:
+                    address = next(iter(addresses), None)
                 snapshot.append({
                     "entry": entry,
                     "delivery": delivery,
@@ -1125,11 +1372,216 @@ class DeliveryApp:
                 continue
         return snapshot
 
+    @staticmethod
+    def _next_driver_stop_from_payload(route):
+        payload = route.get("proxima_entrega")
+        if payload:
+            delivery_id = payload.get("entrega_id") or payload.get("id")
+            if delivery_id is not None:
+                address = payload.get("destino") or payload.get("address") or {}
+                delivery = {
+                    "id": delivery_id,
+                    "pedido_id": payload.get("pedido_id"),
+                    "status": payload.get("status") or "AGUARDANDO_COLETA",
+                }
+                return {
+                    "entry": payload,
+                    "delivery": delivery,
+                    "cliente": {"nome": f"Pedido #{payload.get('pedido_id')}" if payload.get("pedido_id") is not None else f"Entrega #{delivery_id}"},
+                    "address": address,
+                    "order": int(payload.get("sequencia_otimizada") or payload.get("ordem_visita") or 0),
+                }
+
+        for stop in DeliveryApp._driver_route_payload_snapshot(route):
+            if stop["delivery"]["status"] not in {"ENTREGUE", "CANCELADA"}:
+                return stop
+        return None
+
     def _next_driver_stop(self, route):
+        payload_next = self._next_driver_stop_from_payload(route)
+        if payload_next is not None:
+            return payload_next
         for stop in self._driver_route_snapshot(route):
             if stop["delivery"]["status"] not in {"ENTREGUE", "CANCELADA"}:
                 return stop
         return None
+
+    @staticmethod
+    def _driver_stop_label(stop: dict | None):
+        if not stop:
+            return "Cliente não informado"
+        cliente = stop.get("cliente") or {}
+        nome = cliente.get("nome") or cliente.get("razao_social") or cliente.get("fantasia")
+        if nome:
+            return str(nome)
+        delivery = stop.get("delivery") or {}
+        pedido_id = delivery.get("pedido_id")
+        if pedido_id is not None:
+            return f"Pedido #{pedido_id}"
+        return "Cliente não informado"
+
+    @staticmethod
+    def _driver_stop_address(stop: dict | None):
+        if not stop:
+            return "Endereço não informado"
+        address = stop.get("address") or {}
+        if not address:
+            base = stop.get("destino") or {}
+            address = base
+        return DeliveryApp._format_driver_address(address)
+
+    @staticmethod
+    def _format_driver_address(address: dict | None):
+        if not address:
+            return "Endereço não informado"
+        parts = []
+        logradouro = address.get("logradouro") or ""
+        numero = address.get("numero") or ""
+        if logradouro or numero:
+            parts.append(f"{logradouro}, {numero}".strip(", "))
+        complemento = address.get("complemento")
+        if complemento:
+            parts.append(complemento)
+        bairro = address.get("bairro")
+        cidade = address.get("cidade") or ""
+        estado = address.get("estado") or ""
+        if bairro or cidade or estado:
+            bairro_city = f"{bairro} – {cidade}/{estado}" if bairro and cidade and estado else ", ".join(filter(None, [bairro, cidade, estado]))
+            parts.append(bairro_city)
+        return "\n".join(part for part in parts if part)
+
+    def loading_order_dialog(self, route, stops):
+        """
+        Tela de ordem de carregamento.
+        Mostra os pedidos em ordem inversa (último a ser entregue primeiro a ser carregado)
+        e exige confirmação antes de permitir iniciar a viagem.
+        """
+        dlg = ft.AlertDialog(title=ft.Text("Ordem de carregamento"), scrollable=True)
+        content_list = []
+
+        content_list.append(
+            ft.Container(
+                content=ft.Text(
+                    "Confirme que os pedidos estão na ordem correta no veículo.\n"
+                    "Último pedido (embaixo) primeiro a ser carregado.",
+                    size=12,
+                    color=ft.Colors.GREY_700,
+                ),
+                padding=16,
+                bgcolor=ft.Colors.AMBER_50,
+                border_radius=12,
+            )
+        )
+
+        # Mostrar paradas em ordem inversa
+        for stop in reversed(stops):
+            delivery = stop.get("delivery", {})
+            address = stop.get("address", {})
+            order = stop.get("order", 0)
+
+            client_name = self._driver_stop_label(stop)
+            formatted_address = self._driver_stop_address(stop)
+
+            content_list.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text(f"Parada {order}: {client_name}", size=12, weight=ft.FontWeight.BOLD),
+                        ft.Text(formatted_address, size=10, color=ft.Colors.GREY_700),
+                        ft.Text(f"Pedido #{delivery.get('pedido_id', '--')}", size=10, color=ft.Colors.GREY_600),
+                    ], spacing=4),
+                    padding=12,
+                    margin=ft.margin.only(bottom=8),
+                    border_radius=8,
+                    bgcolor=ft.Colors.BLUE_50,
+                    border=ft.border.all(1, ft.Colors.BLUE_200),
+                )
+            )
+
+        dlg.content = ft.Column(
+            content_list,
+            scroll=ft.ScrollMode.AUTO,
+        )
+
+        def confirm_and_close(_):
+            dlg.open = False
+            self.page.update()
+            self.driver_route_view(route.get("id"), loading_confirmed=True)
+
+        dlg.actions = [
+            ft.TextButton("Cancelar", on_click=lambda _: self._close_dialog(dlg)),
+            ft.FilledButton("Confirmar carga", on_click=confirm_and_close),
+        ]
+
+        self.page.dialog = dlg
+        dlg.open = True
+        self.page.update()
+
+    def _start_route_execution(self, route):
+        """
+        Inicia a execução da rota.
+        """
+        self.change_route_status(route, "EM_EXECUCAO", event="PARTIDA", observation="Viagem iniciada pelo motorista", progress=5, stay_in_view=True)
+
+    def _complete_next_delivery(self, route, next_stop):
+        """
+        Marca a próxima entrega como concluída.
+        """
+        if not next_stop:
+            self.notify("Nenhuma entrega pendente para concluir.", True)
+            return
+
+        delivery_id = next_stop.get("delivery", {}).get("id")
+        if not delivery_id:
+            self.notify("Erro ao identificar entrega.", True)
+            return
+
+        try:
+            cliente = next_stop.get("cliente", {})
+            self.api.request(
+                "POST",
+                f"/entregas/{delivery_id}/comprovante",
+                json={
+                    "nome_recebedor": cliente.get("nome", "Recebedor"),
+                    "documento_recebedor": f"DOC-{delivery_id}",
+                    "observacao": "Entrega confirmada na execução da rota",
+                },
+            )
+            self.api.request(
+                "PATCH",
+                f"/entregas/{delivery_id}/status",
+                json={"status": "ENTREGUE", "observacao": "Entrega concluída pela execução da rota"},
+            )
+
+            # Recarrega rota atualizada
+            try:
+                updated_route = self.api.request("GET", f"/rotas/{route['id']}")
+                snapshot = self._driver_route_snapshot(updated_route)
+                completed = sum(1 for stop in snapshot if stop["delivery"]["status"] == "ENTREGUE")
+                total = len(snapshot) or 1
+                new_progress = min(100, int((completed / total) * 100))
+
+                if completed >= total:
+                    self.change_route_status(updated_route, "FINALIZADA", progress=100, event="FINALIZADA", observation="Todas as entregas concluídas", stay_in_view=True)
+                else:
+                    self.change_route_status(updated_route, "EM_EXECUCAO", progress=new_progress, event="ENTREGA_REALIZADA", observation=f"Entrega {delivery_id} concluída", stay_in_view=True)
+            except ApiError:
+                # Fallback: tenta com rota original se falhar
+                snapshot = self._driver_route_snapshot(route)
+                completed = sum(1 for stop in snapshot if stop["delivery"]["status"] == "ENTREGUE")
+                total = len(snapshot) or 1
+                new_progress = min(100, int((completed / total) * 100))
+                self.driver_route_view(route.get("id"), loading_confirmed=False)
+                
+            self.notify("Entrega concluída!")
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
+    def _close_dialog(self, dlg):
+        """
+        Fecha um diálogo.
+        """
+        dlg.open = False
+        self.page.update()
 
     def _driver_route_panel(self, route):
         route_progress = int(route.get("progresso_percentual") or 0)
@@ -1139,13 +1591,8 @@ class DeliveryApp:
         next_stop_text = "-"
         next_stop_address = "-"
         if next_stop:
-            next_stop_text = f"{next_stop['cliente'].get('nome')}"
-            next_stop_address = next_stop['address']['logradouro'] if next_stop['address'] else "Endereço não informado"
-            if next_stop['address']:
-                next_stop_address = (
-                    f"{next_stop['address'].get('logradouro', '')}, {next_stop['address'].get('numero', '')} - "
-                    f"{next_stop['address'].get('bairro', '')}, {next_stop['address'].get('cidade', '')}"
-                ).strip(', ')
+            next_stop_text = next_stop['cliente'].get('nome') or "Cliente não informado"
+            next_stop_address = self._format_driver_address(next_stop.get('address'))
 
         def start_execution(_):
             self.change_route_status(route, "EM_EXECUCAO", event="PARTIDA", observation="Execução iniciada pelo motorista", progress=max(route_progress, 5))
@@ -1206,41 +1653,39 @@ class DeliveryApp:
             stop_rows.append(
                 ft.ListTile(
                     leading=ft.Icon(ft.Icons.LOCATION_ON, color=ft.Colors.INDIGO if delivery["status"] != "ENTREGUE" else ft.Colors.GREEN),
-                    title=ft.Text(f"{stop['order']}. {stop['cliente'].get('nome')}") ,
-                    subtitle=ft.Text(f"{stop['address'] and (stop['address'].get('logradouro') or '') or 'Endereço não informado'} · {delivery['status'].replace('_', ' ').title()}"),
+                    title=ft.Text(f"{stop['order']}. {stop['cliente'].get('nome') or 'Cliente'}"),
+                    subtitle=ft.Text(f"{self._format_driver_address(stop.get('address'))} · {delivery['status'].replace('_', ' ').title()}"),
                     trailing=ft.Text(f"#{delivery['id']}"),
                 )
             )
 
         return ft.Container(
-            content=ft.Column([
-                ft.Text(f"Rota: {route['nome']}", size=22, weight=ft.FontWeight.BOLD),
-                ft.Row([
-                    ft.Text(f"Veículo: {route.get('veiculo_id') or '-'}"),
-                    ft.Text(f"Status: {route['status'].replace('_', ' ')}"),
-                ], wrap=True),
-                ft.Row([
-                    ft.Text(f"Progresso: {route_progress}%"),
-                    ft.Text(f"Entregas: {len(stops)}"),
-                ], wrap=True),
-                ft.ProgressBar(value=min(max(route_progress / 100, 0), 1), bar_height=10),
-                ft.Divider(),
-                ft.Text("Próxima parada", weight=ft.FontWeight.BOLD),
-                ft.Text(next_stop_text),
-                ft.Text(f"Endereço: {next_stop_address}", color=ft.Colors.GREY_700),
-                ft.Divider(),
-                ft.Row(action_buttons, wrap=True),
-                ft.Divider(),
-                ft.Text("Entregas da rota", weight=ft.FontWeight.BOLD),
-                *stop_rows,
-            ], tight=True, spacing=10),
+            content=ft.Column(
+                [
+                    ft.Text(f"Rota: {route['nome']}", size=22, weight=ft.FontWeight.BOLD),
+                    ft.Row([
+                        ft.Text(f"Veículo: {route.get('veiculo_id') or '-'}"),
+                        ft.Text(f"Status: {route['status'].replace('_', ' ')}"),
+                    ], wrap=True),
+                    ft.Row([
+                        ft.Text(f"Progresso: {route_progress}%"),
+                        ft.Text(f"Entregas: {len(stops)}"),
+                    ], wrap=True),
+                    ft.ProgressBar(value=min(max(route_progress / 100, 0), 1), bar_height=10),
+                    ft.Divider(),
+                    ft.Text("Próxima parada", weight=ft.FontWeight.BOLD),
+                    ft.Text(next_stop_text),
+                    ft.Text(next_stop_address, color=ft.Colors.GREY_700, selectable=True),
+                ],
+                spacing=10,
+            ),
             padding=20,
             border_radius=16,
             bgcolor=ft.Colors.WHITE,
             shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
         )
 
-    def change_route_status(self, route, new_status, progress=None, event=None, observation=None):
+    def change_route_status(self, route, new_status, progress=None, event=None, observation=None, stay_in_view=False):
         try:
             payload = {"status": new_status}
             if new_status == "EM_EXECUCAO":
@@ -1255,7 +1700,11 @@ class DeliveryApp:
                 payload["progresso_percentual"] = max(0, min(100, int(progress)))
             self.api.request("PATCH", f"/rotas/{route['id']}/status", json=payload)
             self.notify("Status da rota atualizado.")
-            self.routes_view()
+            # Se called from driver_route_view, recarrega a tela; caso contrário, volta para rotas_view
+            if stay_in_view:
+                self.driver_route_view(route.get("id"), loading_confirmed=False)
+            else:
+                self.routes_view()
         except ApiError as exc:
             self.notify(str(exc), True)
 

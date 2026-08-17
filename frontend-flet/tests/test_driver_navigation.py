@@ -295,6 +295,18 @@ def test_driver_dashboard_handles_404_no_route():
     print("✓ Dashboard não mostra erro quando motorista não tem rota (404 tratado corretamente)")
 
 
+def test_driver_active_route_screen_exists():
+    """Testa que a tela de rota ativa do motorista foi implementada."""
+    from app.application import DeliveryApp
+
+    assert hasattr(DeliveryApp, 'driver_route_view'), \
+        "Método driver_route_view não encontrado em DeliveryApp"
+    assert callable(getattr(DeliveryApp, 'driver_route_view')), \
+        "driver_route_view não é um método callable"
+
+    print("✓ driver_route_view existe e é callable")
+
+
 if __name__ == "__main__":
     print("\n" + "="*70)
     print("Phase 2 - Testes de Navegação do Motorista")
@@ -309,6 +321,7 @@ if __name__ == "__main__":
         test_indicators_with_no_route()
         test_mission_card_no_route()
         test_driver_dashboard_handles_404_no_route()  # REGRESSÃO - bug fix
+        test_driver_active_route_screen_exists()  # Phase 3 - tela de rota ativa
         
         print("\n" + "="*70)
         print("✓ TODOS OS TESTES PASSARAM!")
