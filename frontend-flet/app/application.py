@@ -783,23 +783,37 @@ class DeliveryApp:
             route_name = current_route.get("nome", "--")
             status = current_route.get("status", "--").replace("_", " ")
             
-            # Organização (ponto de coleta) - da chave "origem"
+            # Organização (ponto de coleta)
             org_name = "--"
-            if current_route.get("origem"):
-                org_name = current_route["origem"].get("nome", "--")
+            organization = current_route.get("organizacao") or current_route.get("origem") or {}
+            if isinstance(organization, dict):
+                org_name = organization.get("nome") or organization.get("nome", "--")
+            if not org_name or org_name == "--":
+                org_name = "Operação não informada"
             
             # Entregas
             entregas = current_route.get("entregas", [])
             num_entregas = len(entregas)
             
-            # Próxima entrega pendente
+            # Próxima parada real da rota (usa a primeira entrega pendente com endereço)
             proxima_entrega_text = "Nenhuma entrega pendente"
+            next_delivery = None
             for entrega in entregas:
                 if entrega.get("status") not in {"ENTREGUE", "CANCELADA"}:
-                    # Extrair informações
-                    endereco = entrega.get("endereco_destino_id", "--")
-                    proxima_entrega_text = f"Entrega #{entrega.get('id', '--')}"
+                    next_delivery = entrega
                     break
+
+            if next_delivery:
+                next_destino = next_delivery.get("destino") or {}
+                next_address = (
+                    next_destino.get("endereco_formatado")
+                    or next_delivery.get("endereco_destino_formatado")
+                    or next_destino.get("logradouro")
+                )
+                if next_address:
+                    proxima_entrega_text = next_address
+                else:
+                    proxima_entrega_text = f"Entrega #{next_delivery.get('id', '--')}"
             
             # Distância e duração (previstos do backend)
             # Backend retorna: distancia_prevista (float em km), duracao_prevista (float em horas)
@@ -830,7 +844,7 @@ class DeliveryApp:
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Divider(height=10),
                 ft.Column([
-                    ft.Text("Próxima entrega", size=12, color=ft.Colors.GREY_700),
+                    ft.Text("Próxima parada", size=12, color=ft.Colors.GREY_700),
                     ft.Text(proxima_entrega_text, size=14, weight=ft.FontWeight.BOLD),
                 ], spacing=2),
                 ft.Row([

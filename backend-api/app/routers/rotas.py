@@ -380,6 +380,23 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
     ordered_entries = sorted(rota.entregas, key=lambda entry: (entry.ordem_visita or 0, entry.id))
     for entry in ordered_entries:
         entrega = db.get(Entrega, entry.entrega_id)
+        destino = None
+        if entrega and entrega.endereco_destino_id:
+            end = db.get(Endereco, entrega.endereco_destino_id)
+            if end:
+                destino = {
+                    "id": end.id,
+                    "logradouro": end.logradouro,
+                    "numero": end.numero,
+                    "bairro": end.bairro,
+                    "cidade": end.cidade,
+                    "estado": end.estado,
+                    "cep": end.cep,
+                    "endereco_formatado": end.endereco_formatado,
+                    "latitude": float(end.latitude) if end.latitude is not None else None,
+                    "longitude": float(end.longitude) if end.longitude is not None else None,
+                }
+
         payload = {
             "id": entry.id,
             "entrega_id": entry.entrega_id,
@@ -389,6 +406,8 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
             "pedido_id": entrega.pedido_id if entrega else None,
             "previsao_entrega": entrega.previsao_entrega.isoformat() if entrega and entrega.previsao_entrega else None,
             "observacoes": entrega.observacoes if entrega else None,
+            "destino": destino,
+            "endereco_destino_formatado": destino.get("endereco_formatado") if destino else None,
         }
         entregas.append(payload)
 
@@ -402,14 +421,24 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
             "pedido_id": item["pedido_id"],
             "ordem_visita": item["ordem_visita"],
             "status": entrega.status.value,
+            "destino": item.get("destino"),
+            "endereco_destino_formatado": item.get("endereco_destino_formatado"),
         }
         break
+
+    org_payload = None
+    if rota.organizacao:
+        org_payload = {"id": rota.organizacao.id, "nome": rota.organizacao.nome}
+    elif rota.organizacao_id:
+        org = db.get(Organizacao, rota.organizacao_id)
+        org_payload = {"id": rota.organizacao_id, "nome": org.nome if org else None}
 
     payload = {
         "id": rota.id,
         "nome": rota.nome,
         "descricao": rota.descricao,
         "organizacao_id": rota.organizacao_id,
+        "organizacao": org_payload,
         "veiculo_id": rota.veiculo_id,
         "motorista_id": rota.motorista_id,
         "status": rota.status.value if isinstance(rota.status, StatusRota) else rota.status,

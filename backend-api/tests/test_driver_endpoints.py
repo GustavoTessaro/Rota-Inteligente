@@ -75,6 +75,9 @@ def test_get_motorista_rota_atual_returns_active_route(client: TestClient, admin
     assert data["distancia_prevista"] >= 0
     assert data["duracao_prevista"] >= 0
     assert "origem_endereco_id" in data or "origem" in data
+    assert data.get("organizacao") is not None
+    assert data["organizacao"]["nome"]
+    assert data["entregas"][0].get("destino") is not None or data["entregas"][0].get("endereco_destino_formatado")
 
 
 def test_get_motorista_rota_atual_returns_404_when_no_active_route(client: TestClient, admin_headers: dict) -> None:
