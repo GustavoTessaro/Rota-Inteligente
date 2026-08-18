@@ -912,10 +912,40 @@ class DeliveryApp:
             route_status = route.get("status", "PRONTA")
             print("DEBUG driver_route_view stops=", len(stops), "next_stop=", bool(next_stop), "next_name=", next_stop.get("cliente", {}).get("nome") if next_stop else None)
 
+            cliente_nome = None
+            endereco = None
+
+            if next_stop:
+                cliente = next_stop.get("cliente")
+                if cliente:
+                    cliente_nome = cliente.get("nome")
+
+            if not cliente_nome and next_stop:
+                cliente_nome = self._resolve_cliente_nome(next_stop)
+
+            if not cliente_nome and next_stop:
+                cliente_nome = f"Pedido #{next_stop.get('pedido_id')}"
+
+            if not cliente_nome:
+                cliente_nome = "Cliente não informado"
+
+            if next_stop:
+                endereco = next_stop.get("destino") or next_stop.get("address") or {}
+            if not endereco:
+                for stop in stops:
+                    if stop.get("delivery", {}).get("status") not in {"ENTREGUE", "CANCELADA"}:
+                        endereco = stop.get("address") or stop.get("destino") or {}
+                        break
+
+            print("NEXT_STOP_RAW =", next_stop)
+            print("CLIENTE_NOME =", cliente_nome)
+            print("ADDRESS_RAW =", endereco)
+            print("OPERACAO =", route.get("organizacao", {}).get("nome"))
+
             # Mapa com polyline da rota
             operation_name = (route.get("organizacao") or {}).get("nome") or "Operação não informada"
-            map_control = MapView(title=operation_name, height=280, width=920)
-            map_control = map_control.build()
+            map_control = MapView(title=operation_name, height=280, width=920).build()
+            route_map = map_control
             encoded = route.get("route_geometry") or route.get("routeGeometry")
             print("DEBUG driver_route_view geometry_present=", bool(encoded), "geometry_len=", len(encoded) if encoded else 0)
             if encoded:
@@ -970,7 +1000,7 @@ class DeliveryApp:
                             ft.Column([
                                 ft.Text(f"Parada {index}: {client_name}", size=12, weight=ft.FontWeight.BOLD),
                                 ft.Text(formatted_address, size=11, color=ft.Colors.GREY_700),
-                                ft.Text(f"Pedido: #{delivery.get('pedido_id', '--')}  •  {delivery_status.replace('_', ' ')}", size=10, color=ft.Colors.GREY_600),
+                                ft.Text(f"Status: {delivery_status.replace('_', ' ')} • Pedido: #{delivery.get('pedido_id', '--')}", size=10, color=ft.Colors.GREY_600),
                             ], spacing=2, expand=True),
                         ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                         padding=14,
@@ -1051,8 +1081,15 @@ class DeliveryApp:
             next_stop_text = "Nenhuma entrega pendente"
             next_stop_address = "-"
             if next_stop:
-                next_stop_text = self._driver_stop_label(next_stop)
-                next_stop_address = self._driver_stop_address(next_stop)
+                next_stop_text = cliente_nome or self._driver_stop_label(next_stop)
+                next_stop_address = self._format_driver_address(endereco) if endereco else self._driver_stop_address(next_stop)
+
+            origin = route.get("origem") or {}
+            origin_text = self._format_driver_address(origin) if origin else "Origem não informada"
+            if not origin_text or origin_text == "Endereço não informado":
+                origin_text = "Origem não informada"
+
+            current_destination = self._format_driver_address(endereco) if endereco else "Destino não informado"
 
             self.content.controls = [
                 self.header_bar("Rota Ativa", f"#{route.get('id')} · {route.get('nome', 'Rota')}", actions=[
@@ -1062,9 +1099,18 @@ class DeliveryApp:
                     content=ft.Column([
                         ft.Row([
                             ft.Column([
+                                ft.Text("Operação", size=12, color=ft.Colors.GREY_700),
+                                ft.Text(operation_name, size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.INDIGO),
+                            ]),
+                            ft.Column([
                                 ft.Text("Status", size=12, color=ft.Colors.GREY_700),
                                 ft.Text(route_status.replace("_", " "), size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.INDIGO),
                             ]),
+                        ], spacing=24),
+                        ft.Text(f"Origem: {origin_text}", size=11, color=ft.Colors.GREY_700, selectable=True),
+                        ft.Text(f"Destino atual: {current_destination}", size=11, color=ft.Colors.GREY_700, selectable=True),
+                        ft.Divider(height=12),
+                        ft.Row([
                             ft.Column([
                                 ft.Text("Próxima parada", size=12, color=ft.Colors.GREY_700),
                                 ft.Text(next_stop_text, size=14, weight=ft.FontWeight.BOLD),
@@ -1072,7 +1118,7 @@ class DeliveryApp:
                         ], spacing=24),
                         ft.Text(next_stop_address, size=11, color=ft.Colors.GREY_600, selectable=True),
                         ft.Divider(height=16),
-                        map_control,
+                        route_map,
                         *([ft.Divider(height=10)] if action_buttons else []),
                         *([ft.Column(action_buttons, spacing=12)] if action_buttons else []),
                     ], spacing=12),
@@ -1302,6 +1348,28 @@ class DeliveryApp:
         ))
 
     @staticmethod
+    def _generic_pedido_name(value):
+        if not isinstance(value, str):
+            return False
+        return value.startswith("Pedido #")
+
+    def _resolve_cliente_payload_from_pedido(self, pedido_id):
+        if pedido_id is None:
+            return None
+        try:
+            pedido = self.api.request("GET", f"/pedidos/{pedido_id}")
+            cliente_id = pedido.get("cliente_id")
+            if cliente_id is None:
+                return None
+            cliente = self.api.request("GET", f"/clientes/{cliente_id}")
+            nome = cliente.get("nome") or cliente.get("razao_social") or cliente.get("fantasia")
+            if not nome:
+                return None
+            return {"id": cliente.get("id"), "nome": nome}
+        except ApiError:
+            return None
+
+    @staticmethod
     def _driver_route_payload_snapshot(route):
         snapshot = []
         entries = list(route.get("entregas") or [])
@@ -1322,7 +1390,14 @@ class DeliveryApp:
                 "status": entry.get("status") or "AGUARDANDO_COLETA",
             }
             address = entry.get("destino") or entry.get("address") or {}
-            cliente = {"nome": f"Pedido #{entry.get('pedido_id')}" if entry.get("pedido_id") is not None else f"Entrega #{delivery_id}"}
+            cliente = entry.get("cliente") or {}
+            nome = cliente.get("nome") if isinstance(cliente, dict) else None
+            if not cliente or DeliveryApp._generic_pedido_name(nome):
+                pedido_id = entry.get("pedido_id")
+                if pedido_id is not None:
+                    cliente = {"nome": f"Pedido #{pedido_id}"}
+                else:
+                    cliente = {"nome": f"Entrega #{delivery_id}"}
             snapshot.append({
                 "entry": entry,
                 "delivery": delivery,
@@ -1384,10 +1459,15 @@ class DeliveryApp:
                     "pedido_id": payload.get("pedido_id"),
                     "status": payload.get("status") or "AGUARDANDO_COLETA",
                 }
+                cliente = payload.get("cliente") or {}
+                nome = cliente.get("nome") if isinstance(cliente, dict) else None
+                if not cliente or DeliveryApp._generic_pedido_name(nome):
+                    pedido_id = payload.get("pedido_id")
+                    cliente = {"nome": f"Pedido #{pedido_id}" if pedido_id is not None else f"Entrega #{delivery_id}"}
                 return {
                     "entry": payload,
                     "delivery": delivery,
-                    "cliente": {"nome": f"Pedido #{payload.get('pedido_id')}" if payload.get("pedido_id") is not None else f"Entrega #{delivery_id}"},
+                    "cliente": cliente,
                     "address": address,
                     "order": int(payload.get("sequencia_otimizada") or payload.get("ordem_visita") or 0),
                 }
@@ -1405,6 +1485,38 @@ class DeliveryApp:
             if stop["delivery"]["status"] not in {"ENTREGUE", "CANCELADA"}:
                 return stop
         return None
+
+    def _resolve_cliente_nome(self, next_stop):
+        if not next_stop:
+            return None
+        cliente = next_stop.get("cliente") or {}
+        nome = cliente.get("nome") or cliente.get("razao_social") or cliente.get("fantasia")
+        if nome and not self._generic_pedido_name(str(nome)):
+            print("CLIENTE_REAL =", nome)
+            return str(nome)
+
+        pedido_id = next_stop.get("pedido_id") or next_stop.get("entrega_id")
+        try:
+            print("RESOLVE_CLIENTE pedido=", pedido_id)
+            if pedido_id is None:
+                return None
+            pedido = self.api.request("GET", f"/pedidos/{pedido_id}")
+            print("PEDIDO=", pedido)
+            cliente_id = None
+            cliente = None
+            if isinstance(pedido, dict):
+                cliente_id = pedido.get("cliente_id")
+            if cliente_id is not None:
+                cliente = self.api.request("GET", f"/clientes/{cliente_id}")
+            print("CLIENTE=", cliente)
+            if isinstance(cliente, dict):
+                cliente_nome = cliente.get("nome") or cliente.get("razao_social") or cliente.get("fantasia")
+                if cliente_nome:
+                    return str(cliente_nome)
+            return f"Pedido #{pedido_id}"
+        except Exception as exc:
+            print("RESOLVE_CLIENTE FALHOU", exc)
+            return f"Pedido #{pedido_id}" if pedido_id is not None else None
 
     @staticmethod
     def _driver_stop_label(stop: dict | None):
@@ -1449,6 +1561,154 @@ class DeliveryApp:
             bairro_city = f"{bairro} – {cidade}/{estado}" if bairro and cidade and estado else ", ".join(filter(None, [bairro, cidade, estado]))
             parts.append(bairro_city)
         return "\n".join(part for part in parts if part)
+
+    def _resolve_driver_route_details(self, route, next_stop=None):
+        operation_name = (route.get("organizacao") or {}).get("nome") or "Operação não informada"
+
+        if next_stop is None:
+            next_stop = route.get("proxima_entrega")
+
+        endereco = None
+        if next_stop:
+            endereco = next_stop.get("destino") or next_stop.get("address") or {}
+        if not endereco:
+            for stop in route.get("entregas") or []:
+                if stop.get("status") not in {"ENTREGUE", "CANCELADA"}:
+                    endereco = stop.get("destino") or stop.get("address") or {}
+                    break
+
+        cliente_nome = None
+        if next_stop:
+            cliente_nome = ((next_stop.get("cliente") or {}).get("nome") or (next_stop.get("cliente") or {}).get("razao_social"))
+        if not cliente_nome and next_stop:
+            pedido_id = next_stop.get("pedido_id") or next_stop.get("entrega_id")
+            if pedido_id is not None:
+                try:
+                    pedido = self.api.request("GET", f"/pedidos/{pedido_id}")
+                    cliente_id = pedido.get("cliente_id")
+                    if cliente_id is not None:
+                        cliente = self.api.request("GET", f"/clientes/{cliente_id}")
+                        cliente_nome = cliente.get("nome") or cliente.get("razao_social")
+                except ApiError:
+                    cliente_nome = None
+
+        if not cliente_nome:
+            pedido_id = None
+            if next_stop:
+                pedido_id = next_stop.get("pedido_id")
+            if pedido_id is None:
+                for stop in route.get("entregas") or []:
+                    if stop.get("status") not in {"ENTREGUE", "CANCELADA"}:
+                        pedido_id = stop.get("pedido_id")
+                        break
+            if pedido_id is not None:
+                try:
+                    pedido = self.api.request("GET", f"/pedidos/{pedido_id}")
+                    cliente_id = pedido.get("cliente_id")
+                    if cliente_id is not None:
+                        cliente = self.api.request("GET", f"/clientes/{cliente_id}")
+                        cliente_nome = cliente.get("nome") or cliente.get("razao_social")
+                except ApiError:
+                    cliente_nome = None
+
+        if not cliente_nome and next_stop:
+            pedido_id = next_stop.get("pedido_id")
+            if pedido_id is not None:
+                cliente_nome = f"Pedido #{pedido_id}"
+
+        if not cliente_nome:
+            cliente_nome = "Cliente não informado"
+
+        if not endereco and next_stop and next_stop.get("destino"):
+            endereco = next_stop.get("destino")
+
+        print("NEXT_STOP_RAW =", next_stop)
+        print("CLIENT_NAME =", cliente_nome)
+        print("ADDRESS_RAW =", endereco)
+        print("OPERATION =", operation_name)
+
+        return {
+            "operation_name": operation_name,
+            "cliente_nome": cliente_nome,
+            "endereco": endereco,
+            "next_stop": next_stop,
+        }
+
+    def _build_route_leaflet_map(self, route, stops):
+        origin = route.get("origem") or {}
+        route_points = []
+        if origin.get("latitude") is not None and origin.get("longitude") is not None:
+            route_points.append([float(origin["latitude"]), float(origin["longitude"])])
+        for stop in stops:
+            address = stop.get("address") or stop.get("destino") or {}
+            lat = address.get("latitude")
+            lng = address.get("longitude")
+            if lat is not None and lng is not None:
+                route_points.append([float(lat), float(lng)])
+        if len(route_points) < 2:
+            fallback = []
+            if origin.get("latitude") is not None and origin.get("longitude") is not None:
+                fallback.append([float(origin["latitude"]), float(origin["longitude"])])
+            next_stop = route.get("proxima_entrega") or {}
+            destino = next_stop.get("destino") or {}
+            if destino.get("latitude") is not None and destino.get("longitude") is not None:
+                fallback.append([float(destino["latitude"]), float(destino["longitude"])])
+            route_points = fallback
+
+        if len(route_points) < 2:
+            route_points = [[-27.816, -50.325], [-27.83, -50.35]]
+
+        points_json = json.dumps(route_points)
+        html = f"""
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+          <style>
+            html, body {{ height: 100%; margin: 0; padding: 0; }}
+            #map {{ height: 100%; width: 100%; min-height: 300px; border-radius: 14px; }}
+          </style>
+        </head>
+        <body>
+          <div id="map"></div>
+          <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+          <script>
+            const routePoints = {points_json};
+            const map = L.map('map').setView(routePoints[0], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {{
+              attribution: '&copy; OpenStreetMap contributors'
+            }}).addTo(map);
+
+            const routeLine = L.polyline(routePoints, {{ color: '#1d4ed8', weight: 5, opacity: 0.9 }}).addTo(map);
+            const bounds = routeLine.getBounds();
+            map.fitBounds(bounds.pad(0.35));
+
+            const origin = routePoints[0];
+            const originMarker = L.marker(origin).addTo(map);
+            originMarker.bindPopup('Origem');
+
+            routePoints.slice(1).forEach((point, index) => {{
+              const marker = L.marker(point).addTo(map);
+              marker.bindPopup(`Parada ${index + 1}`);
+            }});
+          </script>
+        </body>
+        </html>
+        """
+        return "data:text/html;charset=utf-8," + quote(html)
+
+    def _render_driver_map(self, route, stops):
+        html_url = self._build_route_leaflet_map(route, stops)
+        return ft.WebView(
+            html_url,
+            javascript_enabled=True,
+            enable_javascript=True,
+            width=920,
+            height=280,
+            expand=True,
+        )
 
     def loading_order_dialog(self, route, stops):
         """

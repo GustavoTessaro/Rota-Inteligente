@@ -19,8 +19,14 @@ class ApiClient:
         try:
             response = self.client.request(method, path, headers=headers, **kwargs)
         except httpx.RequestError as exc:
+            print(f"API ERROR -> {method} {path}")
+            print(f"STATUS -> {'sem resposta'}")
+            print(f"BODY -> {exc}")
             raise ApiError("Não foi possível conectar à API.") from exc
         if response.status_code >= 400:
+            print(f"API ERROR -> {method} {path}")
+            print(f"STATUS -> {response.status_code}")
+            print(f"BODY -> {response.text}")
             try:
                 detail = response.json().get("detail", "Erro ao processar solicitação")
             except ValueError:

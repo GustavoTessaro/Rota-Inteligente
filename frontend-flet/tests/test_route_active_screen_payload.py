@@ -42,6 +42,7 @@ def test_driver_route_snapshot_uses_route_payload_directly():
     assert len(snapshot) == 2
     assert snapshot[0]["delivery"]["id"] == 16
     assert snapshot[0]["address"]["logradouro"] == "Rua Doutor Aujor Luz"
+    assert snapshot[0]["cliente"]["nome"] == "IFSC"
     assert snapshot[1]["order"] == 2
 
 

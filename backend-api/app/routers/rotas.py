@@ -1,4 +1,5 @@
 import hashlib
+import traceback
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -20,6 +21,7 @@ from ..deps import (
     validate_route_delivery_entries,
 )
 from ..models import (
+    Cliente,
     Endereco,
     Entrega,
     Organizacao,
@@ -341,135 +343,152 @@ def _driver_route_priority(status: StatusRota) -> int:
 
 
 def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
-    origem = None
-    if rota.origem_endereco_id is not None:
-        origem_endereco = db.get(Endereco, rota.origem_endereco_id)
-        origem = {
-            "endereco_id": rota.origem_endereco_id,
-            "logradouro": origem_endereco.logradouro if origem_endereco else None,
-            "numero": origem_endereco.numero if origem_endereco else None,
-            "bairro": origem_endereco.bairro if origem_endereco else None,
-            "cidade": origem_endereco.cidade if origem_endereco else None,
-            "estado": origem_endereco.estado if origem_endereco else None,
-            "cep": origem_endereco.cep if origem_endereco else None,
-            "latitude": float(origem_endereco.latitude) if origem_endereco and origem_endereco.latitude is not None else None,
-            "longitude": float(origem_endereco.longitude) if origem_endereco and origem_endereco.longitude is not None else None,
-            "endereco_formatado": origem_endereco.endereco_formatado if origem_endereco else None,
-        }
-    elif rota.organizacao_id:
-        org = db.get(Organizacao, rota.organizacao_id)
-        if org and org.endereco_id is not None:
-            org_endereco = db.get(Endereco, org.endereco_id)
+    try:
+        origem = None
+        if rota.origem_endereco_id is not None:
+            origem_endereco = db.get(Endereco, rota.origem_endereco_id)
             origem = {
-                "tipo": "organizacao",
-                "organizacao_id": org.id,
-                "nome": org.nome,
-                "endereco_id": org.endereco_id,
-                "logradouro": org_endereco.logradouro if org_endereco else None,
-                "numero": org_endereco.numero if org_endereco else None,
-                "bairro": org_endereco.bairro if org_endereco else None,
-                "cidade": org_endereco.cidade if org_endereco else None,
-                "estado": org_endereco.estado if org_endereco else None,
-                "cep": org_endereco.cep if org_endereco else None,
-                "latitude": float(org_endereco.latitude) if org_endereco and org_endereco.latitude is not None else None,
-                "longitude": float(org_endereco.longitude) if org_endereco and org_endereco.longitude is not None else None,
-                "endereco_formatado": org_endereco.endereco_formatado if org_endereco else org.endereco,
+                "endereco_id": rota.origem_endereco_id,
+                "logradouro": origem_endereco.logradouro if origem_endereco else None,
+                "numero": origem_endereco.numero if origem_endereco else None,
+                "complemento": origem_endereco.complemento if origem_endereco else None,
+                "bairro": origem_endereco.bairro if origem_endereco else None,
+                "cidade": origem_endereco.cidade if origem_endereco else None,
+                "estado": origem_endereco.estado if origem_endereco else None,
+                "cep": origem_endereco.cep if origem_endereco else None,
+                "latitude": float(origem_endereco.latitude) if origem_endereco and origem_endereco.latitude is not None else None,
+                "longitude": float(origem_endereco.longitude) if origem_endereco and origem_endereco.longitude is not None else None,
+                "endereco_formatado": origem_endereco.endereco_formatado if origem_endereco else None,
             }
-
-    entregas = []
-    ordered_entries = sorted(rota.entregas, key=lambda entry: (entry.ordem_visita or 0, entry.id))
-    for entry in ordered_entries:
-        entrega = db.get(Entrega, entry.entrega_id)
-        destino = None
-        if entrega and entrega.endereco_destino_id:
-            end = db.get(Endereco, entrega.endereco_destino_id)
-            if end:
-                destino = {
-                    "id": end.id,
-                    "logradouro": end.logradouro,
-                    "numero": end.numero,
-                    "bairro": end.bairro,
-                    "cidade": end.cidade,
-                    "estado": end.estado,
-                    "cep": end.cep,
-                    "endereco_formatado": end.endereco_formatado,
-                    "latitude": float(end.latitude) if end.latitude is not None else None,
-                    "longitude": float(end.longitude) if end.longitude is not None else None,
+        elif rota.organizacao_id:
+            org = db.get(Organizacao, rota.organizacao_id)
+            if org and org.endereco_id is not None:
+                org_endereco = db.get(Endereco, org.endereco_id)
+                origem = {
+                    "tipo": "organizacao",
+                    "organizacao_id": org.id,
+                    "nome": org.nome,
+                    "endereco_id": org_endereco.id,
+                    "logradouro": org_endereco.logradouro if org_endereco else None,
+                    "numero": org_endereco.numero if org_endereco else None,
+                    "complemento": org_endereco.complemento if org_endereco else None,
+                    "bairro": org_endereco.bairro if org_endereco else None,
+                    "cidade": org_endereco.cidade if org_endereco else None,
+                    "estado": org_endereco.estado if org_endereco else None,
+                    "cep": org_endereco.cep if org_endereco else None,
+                    "latitude": float(org_endereco.latitude) if org_endereco and org_endereco.latitude is not None else None,
+                    "longitude": float(org_endereco.longitude) if org_endereco and org_endereco.longitude is not None else None,
+                    "endereco_formatado": org_endereco.endereco_formatado if org_endereco else org.endereco,
                 }
 
+        entregas = []
+        ordered_entries = sorted(rota.entregas, key=lambda entry: (entry.ordem_visita or 0, entry.id))
+        for entry in ordered_entries:
+            entrega = db.get(Entrega, entry.entrega_id)
+            destino = None
+            cliente_payload = None
+            if entrega and entrega.pedido_id:
+                pedido = entrega.pedido
+                if pedido and pedido.cliente_id:
+                    cliente = db.get(Cliente, pedido.cliente_id)
+                    if cliente:
+                        cliente_payload = {"id": cliente.id, "nome": cliente.nome}
+            if entrega and entrega.endereco_destino_id:
+                end = db.get(Endereco, entrega.endereco_destino_id)
+                if end:
+                    destino = {
+                        "id": end.id,
+                        "logradouro": end.logradouro,
+                        "numero": end.numero,
+                        "complemento": end.complemento,
+                        "bairro": end.bairro,
+                        "cidade": end.cidade,
+                        "estado": end.estado,
+                        "cep": end.cep,
+                        "endereco_formatado": end.endereco_formatado,
+                        "latitude": float(end.latitude) if end.latitude is not None else None,
+                        "longitude": float(end.longitude) if end.longitude is not None else None,
+                    }
+
+            payload = {
+                "id": entry.id,
+                "entrega_id": entry.entrega_id,
+                "ordem_visita": entry.ordem_visita,
+                "sequencia_otimizada": entry.sequencia_otimizada,
+                "status": entrega.status.value if entrega and entrega.status else None,
+                "pedido_id": entrega.pedido_id if entrega else None,
+                "cliente": cliente_payload,
+                "previsao_entrega": entrega.previsao_entrega.isoformat() if entrega and entrega.previsao_entrega else None,
+                "observacoes": entrega.observacoes if entrega else None,
+                "destino": destino,
+                "endereco_destino_formatado": destino.get("endereco_formatado") if destino else None,
+            }
+            entregas.append(payload)
+
+        next_delivery = None
+        for item in entregas:
+            entrega = db.get(Entrega, item["entrega_id"])
+            if entrega is None or entrega.status in {StatusEntrega.ENTREGUE, StatusEntrega.CANCELADA}:
+                continue
+            next_delivery = {
+                "entrega_id": item["entrega_id"],
+                "pedido_id": item["pedido_id"],
+                "ordem_visita": item["ordem_visita"],
+                "status": entrega.status.value,
+                "cliente": item.get("cliente"),
+                "destino": item.get("destino"),
+                "endereco_destino_formatado": item.get("endereco_destino_formatado"),
+            }
+            break
+
+        org_payload = None
+        if rota.organizacao:
+            org_payload = {"id": rota.organizacao.id, "nome": rota.organizacao.nome}
+        elif rota.organizacao_id:
+            org = db.get(Organizacao, rota.organizacao_id)
+            org_payload = {"id": rota.organizacao_id, "nome": org.nome if org else None}
+
         payload = {
-            "id": entry.id,
-            "entrega_id": entry.entrega_id,
-            "ordem_visita": entry.ordem_visita,
-            "sequencia_otimizada": entry.sequencia_otimizada,
-            "status": entrega.status.value if entrega and entrega.status else None,
-            "pedido_id": entrega.pedido_id if entrega else None,
-            "previsao_entrega": entrega.previsao_entrega.isoformat() if entrega and entrega.previsao_entrega else None,
-            "observacoes": entrega.observacoes if entrega else None,
-            "destino": destino,
-            "endereco_destino_formatado": destino.get("endereco_formatado") if destino else None,
+            "id": rota.id,
+            "nome": rota.nome,
+            "descricao": rota.descricao,
+            "organizacao_id": rota.organizacao_id,
+            "organizacao": org_payload,
+            "veiculo_id": rota.veiculo_id,
+            "motorista_id": rota.motorista_id,
+            "status": rota.status.value if isinstance(rota.status, StatusRota) else rota.status,
+            "data_planejada": rota.data_planejada.isoformat() if rota.data_planejada else None,
+            "data_inicio": rota.data_inicio.isoformat() if rota.data_inicio else None,
+            "data_conclusao": rota.data_conclusao.isoformat() if rota.data_conclusao else None,
+            "origem_endereco_id": rota.origem_endereco_id,
+            "destino_endereco_id": rota.destino_endereco_id,
+            "origem": origem,
+            "route_geometry": rota.route_geometry,
+            "entregas": entregas,
+            "proxima_entrega": next_delivery,
+            "progresso_percentual": rota.progresso_percentual,
+            "distancia_prevista": float(rota.distancia_prevista or 0),
+            "duracao_prevista": float(rota.duracao_prevista or 0),
+            "veiculo": {
+                "id": rota.veiculo_id,
+                "placa": rota.veiculo.placa,
+                "modelo": rota.veiculo.modelo,
+                "marca": rota.veiculo.marca,
+            } if rota.veiculo else None,
+            "motorista": {
+                "id": rota.motorista_id,
+                "nome": rota.motorista.nome,
+                "email": rota.motorista.email,
+                "perfil": rota.motorista.perfil.value,
+            } if rota.motorista else None,
+            "distancia_real": float(rota.distancia_real or 0),
+            "duracao_real": float(rota.duracao_real or 0),
         }
-        entregas.append(payload)
-
-    next_delivery = None
-    for item in entregas:
-        entrega = db.get(Entrega, item["entrega_id"])
-        if entrega is None or entrega.status in {StatusEntrega.ENTREGUE, StatusEntrega.CANCELADA}:
-            continue
-        next_delivery = {
-            "entrega_id": item["entrega_id"],
-            "pedido_id": item["pedido_id"],
-            "ordem_visita": item["ordem_visita"],
-            "status": entrega.status.value,
-            "destino": item.get("destino"),
-            "endereco_destino_formatado": item.get("endereco_destino_formatado"),
-        }
-        break
-
-    org_payload = None
-    if rota.organizacao:
-        org_payload = {"id": rota.organizacao.id, "nome": rota.organizacao.nome}
-    elif rota.organizacao_id:
-        org = db.get(Organizacao, rota.organizacao_id)
-        org_payload = {"id": rota.organizacao_id, "nome": org.nome if org else None}
-
-    payload = {
-        "id": rota.id,
-        "nome": rota.nome,
-        "descricao": rota.descricao,
-        "organizacao_id": rota.organizacao_id,
-        "organizacao": org_payload,
-        "veiculo_id": rota.veiculo_id,
-        "motorista_id": rota.motorista_id,
-        "status": rota.status.value if isinstance(rota.status, StatusRota) else rota.status,
-        "data_planejada": rota.data_planejada.isoformat() if rota.data_planejada else None,
-        "data_inicio": rota.data_inicio.isoformat() if rota.data_inicio else None,
-        "data_conclusao": rota.data_conclusao.isoformat() if rota.data_conclusao else None,
-        "origem_endereco_id": rota.origem_endereco_id,
-        "destino_endereco_id": rota.destino_endereco_id,
-        "origem": origem,
-        "route_geometry": rota.route_geometry,
-        "entregas": entregas,
-        "proxima_entrega": next_delivery,
-        "progresso_percentual": rota.progresso_percentual,
-        "distancia_prevista": float(rota.distancia_prevista or 0),
-        "duracao_prevista": float(rota.duracao_prevista or 0),
-        "veiculo": {
-            "id": rota.veiculo_id,
-            "placa": rota.veiculo.placa,
-            "modelo": rota.veiculo.modelo,
-            "marca": rota.veiculo.marca,
-        } if rota.veiculo else None,
-        "motorista": {
-            "id": rota.motorista_id,
-            "nome": rota.motorista.nome,
-            "email": rota.motorista.email,
-            "perfil": rota.motorista.perfil.value,
-        } if rota.motorista else None,
-        "distancia_real": float(rota.distancia_real or 0),
-        "duracao_real": float(rota.duracao_real or 0),
-    }
-    return payload
+        return payload
+    except Exception:
+        print("=== DRIVER CURRENT ROUTE SERIALIZER ERROR ===")
+        traceback.print_exc()
+        raise
 
 
 @router.get("/motorista/atual")
@@ -477,40 +496,46 @@ def get_current_driver_route(
     db: Session = Depends(get_db),
     user: Usuario = Depends(current_user),
 ):
-    if user.perfil != Perfil.MOTORISTA:
-        raise HTTPException(403, "Apenas motoristas podem consultar a rota atual")
+    import traceback
+    try:
+        if user.perfil != Perfil.MOTORISTA:
+            raise HTTPException(403, "Apenas motoristas podem consultar a rota atual")
 
-    stmt = (
-        select(Rota)
-        .where(Rota.motorista_id == user.id)
-        .where(Rota.status.in_({
-            StatusRota.EM_EXECUCAO,
-            StatusRota.PRONTA,
-            StatusRota.PLANEJADA,
-            StatusRota.PAUSADA,
-            StatusRota.AGUARDANDO_ACEITE,
-            StatusRota.AGUARDANDO_MOTORISTA,
-            StatusRota.AGUARDANDO_VEICULO,
-        }))
-        .order_by(
-            case(
-                (Rota.status == StatusRota.EM_EXECUCAO, 7),
-                (Rota.status == StatusRota.PAUSADA, 6),
-                (Rota.status == StatusRota.PRONTA, 5),
-                (Rota.status == StatusRota.PLANEJADA, 4),
-                (Rota.status == StatusRota.AGUARDANDO_ACEITE, 3),
-                (Rota.status == StatusRota.AGUARDANDO_MOTORISTA, 2),
-                (Rota.status == StatusRota.AGUARDANDO_VEICULO, 1),
-                else_=0,
-            ).desc(),
-            Rota.data_inicio.desc().nullslast(),
-            Rota.criado_em.desc(),
+        stmt = (
+            select(Rota)
+            .where(Rota.motorista_id == user.id)
+            .where(Rota.status.in_({
+                StatusRota.EM_EXECUCAO,
+                StatusRota.PRONTA,
+                StatusRota.PLANEJADA,
+                StatusRota.PAUSADA,
+                StatusRota.AGUARDANDO_ACEITE,
+                StatusRota.AGUARDANDO_MOTORISTA,
+                StatusRota.AGUARDANDO_VEICULO,
+            }))
+            .order_by(
+                case(
+                    (Rota.status == StatusRota.EM_EXECUCAO, 7),
+                    (Rota.status == StatusRota.PAUSADA, 6),
+                    (Rota.status == StatusRota.PRONTA, 5),
+                    (Rota.status == StatusRota.PLANEJADA, 4),
+                    (Rota.status == StatusRota.AGUARDANDO_ACEITE, 3),
+                    (Rota.status == StatusRota.AGUARDANDO_MOTORISTA, 2),
+                    (Rota.status == StatusRota.AGUARDANDO_VEICULO, 1),
+                    else_=0,
+                ).desc(),
+                Rota.data_inicio.desc().nullslast(),
+                Rota.criado_em.desc(),
+            )
         )
-    )
-    rota = db.scalar(stmt)
-    if rota is None:
-        raise HTTPException(404, "Nenhuma rota ativa para este motorista")
-    return _serialize_route_for_driver(db, rota)
+        rota = db.scalar(stmt)
+        if rota is None:
+            raise HTTPException(404, "Nenhuma rota ativa para este motorista")
+        return _serialize_route_for_driver(db, rota)
+    except Exception as e:
+        print("=== DRIVER CURRENT ROUTE ERROR ===")
+        traceback.print_exc()
+        raise
 
 
 @router.get("/{rota_id}/sequencia-carregamento")
@@ -523,6 +548,11 @@ def get_route_loading_sequence(rota_id: int, db: Session = Depends(get_db), user
     for entry in ordered:
         entrega = db.get(Entrega, entry.entrega_id)
         pedido = entrega.pedido if entrega else None
+        cliente_payload = None
+        if pedido and pedido.cliente_id:
+            cliente = db.get(Cliente, pedido.cliente_id)
+            if cliente:
+                cliente_payload = {"id": cliente.id, "nome": cliente.nome}
         result.append({
             "id": entry.id,
             "entrega_id": entry.entrega_id,
@@ -530,6 +560,7 @@ def get_route_loading_sequence(rota_id: int, db: Session = Depends(get_db), user
             "sequencia_otimizada": entry.sequencia_otimizada,
             "pedido_id": entrega.pedido_id if entrega else None,
             "numero_pedido": pedido.numero_pedido if pedido else None,
+            "cliente": cliente_payload,
             "status": entrega.status.value if entrega and entrega.status else None,
         })
     return result
