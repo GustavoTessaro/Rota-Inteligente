@@ -196,6 +196,7 @@ class RotaEntregaIn(BaseModel):
 class RotaEntregaOut(RotaEntregaIn, ORMModel):
     id: int
     rota_id: int
+    status: str | None = None
 
 
 class RotaHistoricoOut(ORMModel):
@@ -370,6 +371,7 @@ class RotaOut(ORMModel):
     criado_em: datetime
     atualizado_em: datetime
     entregas: list[RotaEntregaOut] | None = None
+    historico: list[RotaHistoricoOut] | None = None
 
 
 class ClienteCreate(BaseModel):

@@ -21,6 +21,7 @@ from .models import (
     StatusEntrega,
     StatusPedido,
     StatusRota,
+    TipoEventoRota,
     Usuario,
     Veiculo,
     Endereco,
@@ -48,6 +49,12 @@ TERMINAL_DELIVERY_STATUSES = {
     StatusEntrega.ENTREGUE,
     StatusEntrega.NAO_ENTREGUE,
     StatusEntrega.CANCELADA,
+}
+
+PENDING_DELIVERY_STATUSES = {
+    StatusEntrega.AGUARDANDO_COLETA,
+    StatusEntrega.COLETADA,
+    StatusEntrega.EM_ROTA,
 }
 
 
@@ -197,6 +204,56 @@ def ensure_delivery_can_be_routed(db: Session, pedido: Pedido, delivery: Entrega
         raise HTTPException(422, f"Entrega {delivery.id} já está vinculada à rota ativa {active_route.id}")
 
 
+def route_has_pending_deliveries(db: Session, rota: Rota) -> bool:
+    for entry in rota.entregas:
+        deliver = db.get(Entrega, entry.entrega_id)
+        if deliver is None:
+            continue
+        if deliver.status not in TERMINAL_DELIVERY_STATUSES:
+            return True
+    return False
+
+
+def recalculate_route_progress(db: Session, rota: Rota) -> int:
+    total = len(rota.entregas or [])
+    if total == 0:
+        rota.progresso_percentual = 0
+        return 0
+
+    processed = 0
+    for entry in rota.entregas:
+        deliver = db.get(Entrega, entry.entrega_id)
+        if deliver is not None and deliver.status in TERMINAL_DELIVERY_STATUSES:
+            processed += 1
+
+    rota.progresso_percentual = min(100, int(round((processed / total) * 100)))
+    return rota.progresso_percentual
+
+
+def finalize_route_if_complete(db: Session, rota: Rota):
+    if rota.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA}:
+        return False
+    if rota.status not in {StatusRota.EM_EXECUCAO, StatusRota.PAUSADA}:
+        return False
+    if route_has_pending_deliveries(db, rota):
+        return False
+
+    previous_status = rota.status
+    rota.status = StatusRota.FINALIZADA
+    rota.progresso_percentual = 100
+    if rota.data_conclusao is None:
+        rota.data_conclusao = datetime.now()
+    rota.historico.append(RotaHistorico(
+        evento=TipoEventoRota.FINALIZADA,
+        status_anterior=previous_status.value if previous_status else None,
+        status_novo=StatusRota.FINALIZADA.value,
+        observacao="Rota concluída automaticamente após processamento de todas as entregas",
+        entrega_id=None,
+        alterado_por=1,
+    ))
+    return True
+
+
 def apply_delivery_status(db: Session, delivery: Entrega, new_status: StatusEntrega, observation: str | None, user_id: int):
     if delivery.status == StatusEntrega.ENTREGUE and new_status != StatusEntrega.ENTREGUE:
         raise HTTPException(422, "Entrega ENTREGUE não pode voltar a um estado operacional")
@@ -217,6 +274,17 @@ def apply_delivery_status(db: Session, delivery: Entrega, new_status: StatusEntr
         observacao=observation,
         alterado_por=user_id,
     ))
+
+    route = db.scalar(
+        select(Rota)
+        .join(RotaEntrega, RotaEntrega.rota_id == Rota.id)
+        .where(RotaEntrega.entrega_id == delivery.id)
+        .where(Rota.status.in_({StatusRota.EM_EXECUCAO, StatusRota.PAUSADA, StatusRota.PRONTA}))
+        .limit(1)
+    )
+    if route is not None:
+        recalculate_route_progress(db, route)
+        finalize_route_if_complete(db, route)
 
 
 def geocode_address(db: Session, endereco: Endereco) -> dict:

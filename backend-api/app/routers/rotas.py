@@ -17,6 +17,7 @@ from ..deps import (
     ensure_delivery_can_be_routed,
     get_or_404,
     staff,
+    TERMINAL_DELIVERY_STATUSES,
     validate_driver,
     validate_organization,
     validate_route_delivery_entries,
@@ -25,6 +26,7 @@ from ..models import (
     Cliente,
     Endereco,
     Entrega,
+    HistoricoEntrega,
     Organizacao,
     Pedido,
     Perfil,
@@ -401,7 +403,15 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
                 }
 
         entregas = []
-        ordered_entries = sorted(rota.entregas, key=lambda entry: (entry.ordem_visita or 0, entry.id))
+        ordered_entries = sorted(
+            rota.entregas,
+            key=lambda entry: (
+                entry.sequencia_otimizada
+                if entry.sequencia_otimizada is not None
+                else (entry.ordem_visita or 0),
+                entry.id,
+            ),
+        )
         for entry in ordered_entries:
             entrega = db.get(Entrega, entry.entrega_id)
             destino = None
@@ -447,12 +457,13 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
         next_delivery = None
         for item in entregas:
             entrega = db.get(Entrega, item["entrega_id"])
-            if entrega is None or entrega.status in {StatusEntrega.ENTREGUE, StatusEntrega.CANCELADA}:
+            if entrega is None or entrega.status in TERMINAL_DELIVERY_STATUSES:
                 continue
             next_delivery = {
                 "entrega_id": item["entrega_id"],
                 "pedido_id": item["pedido_id"],
                 "ordem_visita": item["ordem_visita"],
+                "sequencia_otimizada": item["sequencia_otimizada"],
                 "status": entrega.status.value,
                 "cliente": item.get("cliente"),
                 "destino": item.get("destino"),
@@ -665,6 +676,9 @@ def update_route_status(
         if user.perfil == Perfil.MOTORISTA and rota.motorista_id != user.id:
             raise HTTPException(403, "Acesso negado à rota de outro motorista")
 
+        if not rota.carga_confirmada:
+            raise HTTPException(422, "Carga não confirmada. Confirme a carga antes de iniciar a viagem. campo carga_confirmada obrigatório")
+
         if rota.veiculo_id is None:
             if user.perfil != Perfil.MOTORISTA or rota.motorista_id != user.id:
                 raise HTTPException(422, "Rota precisa de um veículo associado para iniciar")
@@ -696,6 +710,19 @@ def update_route_status(
     rota.status = data.status
     if data.status == StatusRota.EM_EXECUCAO and previous_status != StatusRota.EM_EXECUCAO:
         rota.data_inicio = rota.data_inicio or datetime.utcnow()
+        for entry in rota.entregas:
+            delivery = db.get(Entrega, entry.entrega_id)
+            if delivery is None:
+                continue
+            if delivery.status not in {StatusEntrega.ENTREGUE, StatusEntrega.NAO_ENTREGUE, StatusEntrega.CANCELADA}:
+                delivery.status = StatusEntrega.EM_ROTA
+                db.add(HistoricoEntrega(
+                    entrega_id=delivery.id,
+                    status_anterior=StatusEntrega.AGUARDANDO_COLETA.value,
+                    status_novo=StatusEntrega.EM_ROTA.value,
+                    observacao="Entrega iniciada na viagem",
+                    alterado_por=user.id,
+                ))
     if data.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA} and rota.data_conclusao is None:
         rota.data_conclusao = datetime.utcnow()
 

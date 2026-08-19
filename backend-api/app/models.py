@@ -200,6 +200,10 @@ class RotaEntrega(Base):
     rota: Mapped[Rota] = relationship(back_populates="entregas")
     entrega: Mapped[Entrega] = relationship()
 
+    @property
+    def status(self):
+        return self.entrega.status.value if self.entrega and self.entrega.status else None
+
 
 class RotaHistorico(Base):
     __tablename__ = "rota_historico"
