@@ -39,6 +39,9 @@ class DeliveryApp:
         self.api = ApiClient()
         self.user = None
         self.websocket_client = None
+        self._tracking_thread = None
+        self._tracking_loop = None
+        self._tracking_stop_event = None
         self.websocket_state = "desconectado"
         self.vehicle_states = {}
         self.connection_indicator = None
@@ -135,7 +138,7 @@ class DeliveryApp:
         self.routes_view(status_filter="")
 
     def _connect_tracking_socket(self):
-        if self.websocket_client is not None or websockets is None:
+        if not self._tracking_connection_available() or websockets is None:
             return
 
         def runner():
@@ -145,20 +148,41 @@ class DeliveryApp:
                     async def _listen():
                         async with websockets.connect(build_tracking_ws_url()) as ws:
                             self.websocket_client = ws
+                            self._tracking_loop = asyncio.get_running_loop()
+                            self._tracking_stop_event = asyncio.Event()
                             self._set_connection_state("conectado")
-                            async for raw_message in ws:
-                                if not raw_message:
-                                    break
-                                try:
-                                    data = json.loads(raw_message)
-                                except Exception:
-                                    continue
-                                self.vehicle_states = update_vehicle_state(self.vehicle_states, data)
-                                self._refresh_map_markers()
+                            async def consume_messages():
+                                async for raw_message in ws:
+                                    if not raw_message:
+                                        break
+                                    try:
+                                        data = json.loads(raw_message)
+                                    except Exception:
+                                        continue
+                                    self.vehicle_states = update_vehicle_state(self.vehicle_states, data)
+                                    self._refresh_map_markers()
+
+                            consume_task = asyncio.create_task(consume_messages())
+                            stop_task = asyncio.create_task(self._tracking_stop_event.wait())
+                            done, pending = await asyncio.wait(
+                                {consume_task, stop_task},
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            for task in pending:
+                                task.cancel()
+                            await asyncio.gather(*pending, return_exceptions=True)
+                            for task in done:
+                                if task is consume_task:
+                                    task.result()
+                            self._tracking_stop_event = None
+                            self._tracking_loop = None
+                            self.websocket_client = None
 
                     asyncio.run(_listen())
                 except Exception:
                     self.websocket_client = None
+                    self._tracking_loop = None
+                    self._tracking_stop_event = None
                     if self.user is not None:
                         self._set_connection_state("reconectando")
                         time.sleep(3)
@@ -169,16 +193,16 @@ class DeliveryApp:
                 self._set_connection_state("desconectado")
 
         thread = threading.Thread(target=runner, daemon=True)
+        self._tracking_thread = thread
         thread.start()
+
+    def _tracking_connection_available(self):
+        return self._tracking_thread is None or not self._tracking_thread.is_alive()
 
     def _disconnect_tracking_socket(self):
         self.user = None
-        if self.websocket_client is not None:
-            try:
-                self.websocket_client.close()
-            except Exception:
-                pass
-            self.websocket_client = None
+        if self._tracking_stop_event is not None and self._tracking_loop is not None:
+            self._tracking_loop.call_soon_threadsafe(self._tracking_stop_event.set)
         self._set_connection_state("desconectado")
 
     def notify(self, message: str, error=False):
@@ -1374,15 +1398,20 @@ class DeliveryApp:
         try:
             pedido = self.api.request("GET", f"/pedidos/{pedido_id}")
             cliente_id = pedido.get("cliente_id")
-            if cliente_id is None:
-                return None
-            cliente = self.api.request("GET", f"/clientes/{cliente_id}")
-            nome = cliente.get("nome") or cliente.get("razao_social") or cliente.get("fantasia")
-            if not nome:
-                return None
-            return {"id": cliente.get("id"), "nome": nome}
+            return {"id": cliente_id, "nome": f"Pedido #{pedido_id}"} if cliente_id is not None else None
         except ApiError:
             return None
+
+    def _load_client_lookup(self, orders):
+        clients = self.api.request("GET", "/clientes")
+        clients_by_id = {client["id"]: client for client in clients}
+        addresses_by_client = {}
+        for order in orders:
+            client_id = order.get("cliente_id")
+            if client_id is None or client_id in addresses_by_client:
+                continue
+            addresses_by_client[client_id] = self.api.request("GET", f"/clientes/{client_id}/enderecos")
+        return clients_by_id, addresses_by_client
 
     @staticmethod
     def _driver_route_payload_snapshot(route):
@@ -1513,31 +1542,9 @@ class DeliveryApp:
         cliente = next_stop.get("cliente") or {}
         nome = cliente.get("nome") or cliente.get("razao_social") or cliente.get("fantasia")
         if nome and not self._generic_pedido_name(str(nome)):
-            print("CLIENTE_REAL =", nome)
             return str(nome)
-
         pedido_id = next_stop.get("pedido_id") or next_stop.get("entrega_id")
-        try:
-            print("RESOLVE_CLIENTE pedido=", pedido_id)
-            if pedido_id is None:
-                return None
-            pedido = self.api.request("GET", f"/pedidos/{pedido_id}")
-            print("PEDIDO=", pedido)
-            cliente_id = None
-            cliente = None
-            if isinstance(pedido, dict):
-                cliente_id = pedido.get("cliente_id")
-            if cliente_id is not None:
-                cliente = self.api.request("GET", f"/clientes/{cliente_id}")
-            print("CLIENTE=", cliente)
-            if isinstance(cliente, dict):
-                cliente_nome = cliente.get("nome") or cliente.get("razao_social") or cliente.get("fantasia")
-                if cliente_nome:
-                    return str(cliente_nome)
-            return f"Pedido #{pedido_id}"
-        except Exception as exc:
-            print("RESOLVE_CLIENTE FALHOU", exc)
-            return f"Pedido #{pedido_id}" if pedido_id is not None else None
+        return f"Pedido #{pedido_id}" if pedido_id is not None else "Cliente não informado"
 
     @staticmethod
     def _driver_stop_label(stop: dict | None):
@@ -1604,37 +1611,6 @@ class DeliveryApp:
         if not cliente_nome and next_stop:
             pedido_id = next_stop.get("pedido_id") or next_stop.get("entrega_id")
             if pedido_id is not None:
-                try:
-                    pedido = self.api.request("GET", f"/pedidos/{pedido_id}")
-                    cliente_id = pedido.get("cliente_id")
-                    if cliente_id is not None:
-                        cliente = self.api.request("GET", f"/clientes/{cliente_id}")
-                        cliente_nome = cliente.get("nome") or cliente.get("razao_social")
-                except ApiError:
-                    cliente_nome = None
-
-        if not cliente_nome:
-            pedido_id = None
-            if next_stop:
-                pedido_id = next_stop.get("pedido_id")
-            if pedido_id is None:
-                for stop in route.get("entregas") or []:
-                    if stop.get("status") not in {"ENTREGUE", "CANCELADA"}:
-                        pedido_id = stop.get("pedido_id")
-                        break
-            if pedido_id is not None:
-                try:
-                    pedido = self.api.request("GET", f"/pedidos/{pedido_id}")
-                    cliente_id = pedido.get("cliente_id")
-                    if cliente_id is not None:
-                        cliente = self.api.request("GET", f"/clientes/{cliente_id}")
-                        cliente_nome = cliente.get("nome") or cliente.get("razao_social")
-                except ApiError:
-                    cliente_nome = None
-
-        if not cliente_nome and next_stop:
-            pedido_id = next_stop.get("pedido_id")
-            if pedido_id is not None:
                 cliente_nome = f"Pedido #{pedido_id}"
 
         if not cliente_nome:
@@ -1642,11 +1618,6 @@ class DeliveryApp:
 
         if not endereco and next_stop and next_stop.get("destino"):
             endereco = next_stop.get("destino")
-
-        print("NEXT_STOP_RAW =", next_stop)
-        print("CLIENT_NAME =", cliente_nome)
-        print("ADDRESS_RAW =", endereco)
-        print("OPERATION =", operation_name)
 
         return {
             "operation_name": operation_name,
@@ -2251,20 +2222,24 @@ class DeliveryApp:
         available_orders = [item for item in orders if item.get("status") not in {"CANCELADO", "FINALIZADO"}]
         selected_order_ids = self.delivery_management_selection.get("pedido_ids", [])
 
+        clients_by_id, addresses_by_client = {}, {}
+        try:
+            clients_by_id, addresses_by_client = self._load_client_lookup(available_orders)
+        except Exception:
+            pass
+
         order_checkboxes = []
         for order in available_orders:
             address_label = "Endereço não cadastrado"
             cliente_nome = "Cliente"
-            try:
-                if order.get("cliente_id") is not None:
-                    client = self.api.request("GET", f"/clientes/{order['cliente_id']}")
-                    cliente_nome = client.get("nome") or "Cliente"
-                    addresses = self.api.request("GET", f"/clientes/{order['cliente_id']}/enderecos")
-                    address = next((item for item in addresses if item["id"] == order.get("endereco_entrega_id")), None)
-                    if address:
-                        address_label = f"{address.get('logradouro', '')}, {address.get('numero', '')} - {address.get('bairro', '')}, {address.get('cidade', '')}"
-            except Exception:
-                pass
+            client_id = order.get("cliente_id")
+            if client_id is not None and client_id in clients_by_id:
+                client = clients_by_id[client_id]
+                cliente_nome = client.get("nome") or "Cliente"
+                addresses = addresses_by_client.get(client_id, [])
+                address = next((item for item in addresses if item["id"] == order.get("endereco_entrega_id")), None)
+                if address:
+                    address_label = f"{address.get('logradouro', '')}, {address.get('numero', '')} - {address.get('bairro', '')}, {address.get('cidade', '')}"
             priority_label = ""
             priority = order.get("prioridade") or order.get("priority")
             if priority:
