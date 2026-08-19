@@ -1,10 +1,16 @@
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_entregas.db"
+DEVELOPMENT_DATABASE_URL = "sqlite:///./test_entregas.db"
+PYTEST_DATABASE_PATH = Path(tempfile.gettempdir()) / f"rota_inteligente_pytest_{os.getpid()}.db"
+PYTEST_DATABASE_URL = f"sqlite:///{PYTEST_DATABASE_PATH.as_posix()}"
+
+assert PYTEST_DATABASE_URL != DEVELOPMENT_DATABASE_URL
+os.environ["DATABASE_URL"] = PYTEST_DATABASE_URL
 os.environ["SEED_DATABASE"] = "true"
 
 import pytest

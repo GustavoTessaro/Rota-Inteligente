@@ -647,8 +647,30 @@ class OcorrenciaOut(OcorrenciaIn, ORMModel):
 
 class ComprovanteIn(BaseModel):
     nome_recebedor: str = Field(min_length=2)
-    documento_recebedor: str = Field(min_length=3)
+    documento_recebedor: str | None = None
     observacao: str | None = None
+
+    @field_validator("nome_recebedor", "documento_recebedor", "observacao", mode="before")
+    @classmethod
+    def normalize_receipt_text(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("nome_recebedor")
+    @classmethod
+    def validate_recipient_name(cls, value):
+        if value is None or len(value) < 2:
+            raise ValueError("Nome do recebedor deve possuir pelo menos 2 caracteres")
+        return value
+
+    @field_validator("documento_recebedor")
+    @classmethod
+    def validate_recipient_document(cls, value):
+        if value is not None and len(value) < 3:
+            raise ValueError("Documento do recebedor deve possuir pelo menos 3 caracteres")
+        return value
 
 
 class ComprovanteOut(ComprovanteIn, ORMModel):

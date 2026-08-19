@@ -367,7 +367,7 @@ class ComprovanteEntrega(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     entrega_id: Mapped[int] = mapped_column(ForeignKey("entregas.id"), index=True)
     nome_recebedor: Mapped[str] = mapped_column(String(150))
-    documento_recebedor: Mapped[str] = mapped_column(String(50))
+    documento_recebedor: Mapped[str | None] = mapped_column(String(50), nullable=True)
     observacao: Mapped[str | None] = mapped_column(Text)
     criado_por: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
     criado_em: Mapped[datetime] = mapped_column(DateTime, default=now)

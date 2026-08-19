@@ -24,6 +24,7 @@ from ..deps import (
 )
 from ..models import (
     Cliente,
+    ComprovanteEntrega,
     Endereco,
     Entrega,
     HistoricoEntrega,
@@ -412,8 +413,16 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
                 entry.id,
             ),
         )
+        delivery_ids = [entry.entrega_id for entry in ordered_entries]
+        receipts_by_delivery = {
+            receipt.entrega_id: receipt
+            for receipt in db.scalars(
+                select(ComprovanteEntrega).where(ComprovanteEntrega.entrega_id.in_(delivery_ids))
+            ).all()
+        } if delivery_ids else {}
         for entry in ordered_entries:
             entrega = db.get(Entrega, entry.entrega_id)
+            receipt = receipts_by_delivery.get(entry.entrega_id)
             destino = None
             cliente_payload = None
             if entrega and entrega.pedido_id:
@@ -449,6 +458,12 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
                 "cliente": cliente_payload,
                 "previsao_entrega": entrega.previsao_entrega.isoformat() if entrega and entrega.previsao_entrega else None,
                 "observacoes": entrega.observacoes if entrega else None,
+                "comprovante": {
+                    "nome_recebedor": receipt.nome_recebedor,
+                    "documento_recebedor": receipt.documento_recebedor,
+                    "observacao": receipt.observacao,
+                    "criado_em": receipt.criado_em.isoformat(),
+                } if receipt else None,
                 "destino": destino,
                 "endereco_destino_formatado": destino.get("endereco_formatado") if destino else None,
             }

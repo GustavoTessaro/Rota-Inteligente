@@ -17,7 +17,20 @@ from ..deps import (
     staff,
     validate_driver,
 )
-from ..models import ComprovanteEntrega, Endereco, Entrega, HistoricoEntrega, Ocorrencia, Pedido, Perfil, Usuario
+from ..models import (
+    ComprovanteEntrega,
+    Endereco,
+    Entrega,
+    HistoricoEntrega,
+    Ocorrencia,
+    Pedido,
+    Perfil,
+    Rota,
+    RotaEntrega,
+    StatusEntrega,
+    StatusRota,
+    Usuario,
+)
 from ..schemas import (
     AtribuirIn,
     ComprovanteIn,
@@ -155,6 +168,77 @@ def update_delivery_status(
     return delivery
 
 
+@router.post("/{delivery_id}/concluir", response_model=ComprovanteOut)
+def complete_delivery_with_receipt(
+    delivery_id: int,
+    data: ComprovanteIn,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(delivery_roles),
+):
+    delivery = get_or_404(db, Entrega, delivery_id)
+    route = None
+    if user.perfil == Perfil.MOTORISTA:
+        route = db.scalar(
+            select(Rota)
+            .join(RotaEntrega, RotaEntrega.rota_id == Rota.id)
+            .where(Rota.motorista_id == user.id)
+            .where(Rota.status == StatusRota.EM_EXECUCAO)
+            .where(RotaEntrega.entrega_id == delivery_id)
+            .limit(1)
+        )
+        if route is None:
+            raise HTTPException(403, "Entrega não pertence à rota ativa do motorista")
+        ordered_entries = sorted(
+            route.entregas,
+            key=lambda entry: (
+                entry.sequencia_otimizada
+                if entry.sequencia_otimizada is not None
+                else (entry.ordem_visita or 0),
+                entry.id,
+            ),
+        )
+        current_entry = next(
+            (
+                entry for entry in ordered_entries
+                if entry.entrega and entry.entrega.status not in {
+                    StatusEntrega.ENTREGUE,
+                    StatusEntrega.NAO_ENTREGUE,
+                    StatusEntrega.CANCELADA,
+                }
+            ),
+            None,
+        )
+        if current_entry is None or current_entry.entrega_id != delivery_id:
+            raise HTTPException(409, "A entrega informada não é a parada atual da rota")
+    if delivery.status in {
+        StatusEntrega.ENTREGUE,
+        StatusEntrega.NAO_ENTREGUE,
+        StatusEntrega.CANCELADA,
+    }:
+        raise HTTPException(409, "Entrega já processada e não pode ser concluída novamente")
+
+    receipt = delivery.comprovante
+    if receipt is None:
+        receipt = ComprovanteEntrega(entrega_id=delivery_id, criado_por=user.id, **data.model_dump())
+        db.add(receipt)
+    else:
+        receipt.nome_recebedor = data.nome_recebedor
+        receipt.documento_recebedor = data.documento_recebedor
+        receipt.observacao = data.observacao
+
+    try:
+        apply_delivery_status(db, delivery, StatusEntrega.ENTREGUE, data.observacao, user.id)
+        db.commit()
+        db.refresh(receipt)
+        return receipt
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(500, "Não foi possível concluir a entrega") from exc
+
+
 @router.get("/{delivery_id}/historico")
 def delivery_history(
     delivery_id: int, db: Session = Depends(get_db), _: Usuario = Depends(current_user)
@@ -214,6 +298,8 @@ def create_receipt(
     delivery = get_or_404(db, Entrega, delivery_id)
     if user.perfil == Perfil.MOTORISTA and delivery.entregador_id != user.id:
         raise HTTPException(403, "Entrega não atribuída ao usuário")
+    if delivery.status in {StatusEntrega.NAO_ENTREGUE, StatusEntrega.CANCELADA}:
+        raise HTTPException(409, "Não é possível criar comprovante para uma entrega já processada")
     if delivery.comprovante:
         raise HTTPException(409, "A entrega já possui comprovante")
     receipt = ComprovanteEntrega(entrega_id=delivery_id, criado_por=user.id, **data.model_dump())
@@ -237,6 +323,8 @@ def update_receipt(
     delivery = get_or_404(db, Entrega, delivery_id)
     if user.perfil == Perfil.MOTORISTA and delivery.entregador_id != user.id:
         raise HTTPException(403, "Entrega não atribuída ao usuário")
+    if user.perfil == Perfil.MOTORISTA and delivery.status == StatusEntrega.ENTREGUE:
+        raise HTTPException(409, "Motorista não pode editar comprovante após a entrega")
     receipt = db.scalar(select(ComprovanteEntrega).where(ComprovanteEntrega.entrega_id == delivery_id))
     if not receipt:
         raise HTTPException(404, "Comprovante não encontrado")
@@ -251,6 +339,8 @@ def delete_receipt(delivery_id: int, db: Session = Depends(get_db), user: Usuari
     delivery = get_or_404(db, Entrega, delivery_id)
     if user.perfil == Perfil.MOTORISTA and delivery.entregador_id != user.id:
         raise HTTPException(403, "Entrega não atribuída ao usuário")
+    if user.perfil == Perfil.MOTORISTA and delivery.status == StatusEntrega.ENTREGUE:
+        raise HTTPException(409, "Motorista não pode excluir comprovante após a entrega")
     receipt = db.scalar(select(ComprovanteEntrega).where(ComprovanteEntrega.entrega_id == delivery_id))
     if not receipt:
         raise HTTPException(404, "Comprovante não encontrado")

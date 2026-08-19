@@ -2824,10 +2824,12 @@ class DeliveryApp:
 
     def receipt_dialog(self, delivery_id, return_route_id=None):
         receipt = None
-        try:
-            receipt = self.api.request("GET", f"/entregas/{delivery_id}/comprovante")
-        except ApiError:
-            receipt = None
+        active_route_flow = return_route_id is not None
+        if not active_route_flow:
+            try:
+                receipt = self.api.request("GET", f"/entregas/{delivery_id}/comprovante")
+            except ApiError:
+                receipt = None
         error_message = ft.Text("", color=ft.Colors.RED_700)
         name = ft.TextField(label="Nome do recebedor", value=(receipt or {}).get("nome_recebedor", ""))
         document = ft.TextField(label="Documento", value=(receipt or {}).get("documento_recebedor", ""))
@@ -2840,7 +2842,7 @@ class DeliveryApp:
             if not self.require_text(name, "Informe pelo menos 2 caracteres.", 2):
                 errors.append("Nome do recebedor: informe pelo menos 2 caracteres.")
                 valid = False
-            if not self.require_text(document, "Informe pelo menos 3 caracteres.", 3):
+            if document.value and not self.require_text(document, "Informe pelo menos 3 caracteres.", 3):
                 errors.append("Documento: informe pelo menos 3 caracteres.")
                 valid = False
             if not valid:
@@ -2849,17 +2851,21 @@ class DeliveryApp:
                 return
             try:
                 payload = {
-                    "nome_recebedor": name.value, "documento_recebedor": document.value,
-                    "observacao": note.value,
+                    "nome_recebedor": name.value,
+                    "documento_recebedor": (document.value or "").strip() or None,
+                    "observacao": (note.value or "").strip() or None,
                 }
-                if receipt:
+                if active_route_flow:
+                    self.api.request("POST", f"/entregas/{delivery_id}/concluir", json=payload)
+                    message = "Entrega concluída com comprovante."
+                elif receipt:
                     self.api.request("PUT", f"/entregas/{delivery_id}/comprovante", json=payload)
                     message = "Comprovante atualizado."
                 else:
                     self.api.request("POST", f"/entregas/{delivery_id}/comprovante", json=payload)
+                    self.api.request("PATCH", f"/entregas/{delivery_id}/status",
+                                     json={"status": "ENTREGUE", "observacao": "Entrega confirmada"})
                     message = "Entrega concluída com comprovante."
-                self.api.request("PATCH", f"/entregas/{delivery_id}/status",
-                                 json={"status": "ENTREGUE", "observacao": "Entrega confirmada"})
                 self.close_dialog(dialog)
                 self.notify(message)
                 self._refresh_after_delivery_action(return_route_id)
