@@ -44,12 +44,15 @@ class MapView:
             )
 
         route_points = self._decode_polyline(self.polyline) if self.polyline else []
-        if self.markers:
-            latitudes = [float(marker.get("lat")) for marker in self.markers if marker.get("lat") is not None]
-            longitudes = [float(marker.get("lng")) for marker in self.markers if marker.get("lng") is not None]
-        else:
-            latitudes = [p[0] for p in route_points]
-            longitudes = [p[1] for p in route_points]
+        marker_points = []
+        for marker in self.markers:
+            try:
+                marker_points.append((float(marker.get("lat")), float(marker.get("lng"))))
+            except (TypeError, ValueError):
+                continue
+        all_points = route_points + marker_points
+        latitudes = [point[0] for point in all_points]
+        longitudes = [point[1] for point in all_points]
 
         if not latitudes or not longitudes:
             return ft.Column(
@@ -75,7 +78,9 @@ class MapView:
 
         map_width = max(400, self.width - 24)
         map_height = max(220, self.height - 24)
-        padding = 16
+        marker_width = 110
+        marker_height = 52
+        padding = max(16, marker_width / 2, marker_height / 2)
         available_width = map_width - padding * 2
         available_height = map_height - padding * 2
 
@@ -91,7 +96,13 @@ class MapView:
         if self.polyline:
             route_points = self._decode_polyline(self.polyline)
             if route_points:
-                route_segments = self._build_polyline_segments(route_points, map_width, map_height, padding)
+                route_segments = self._build_polyline_segments(
+                    route_points,
+                    map_width,
+                    map_height,
+                    padding,
+                    (min_lat, max_lat, min_lng, max_lng),
+                )
                 stack_children.extend(route_segments)
 
         for marker in self.markers:
@@ -100,22 +111,35 @@ class MapView:
                 lng = float(marker.get("lng"))
             except (TypeError, ValueError):
                 continue
-            x = padding + int((lng - min_lng) / (max_lng - min_lng) * available_width)
-            y = padding + int((max_lat - lat) / (max_lat - min_lat) * available_height)
+            marker_type = marker.get("title") or marker.get("label") or "desconhecido"
+            print(f"MAP MARKER RENDER -> tipo={marker_type} lat={lat} lng={lng}")
+            x = padding + (lng - min_lng) / (max_lng - min_lng) * available_width
+            y = padding + (max_lat - lat) / (max_lat - min_lat) * available_height
             selected = str(marker.get("id")) == str(self.selected_marker_id)
-            marker_bg = ft.Colors.RED_600 if selected else ft.Colors.INDIGO
+            marker_bg = (
+                ft.Colors.GREEN_700
+                if marker.get("is_origin")
+                else ft.Colors.RED_600
+                if selected or marker.get("is_current")
+                else ft.Colors.INDIGO
+            )
             label = marker.get("title") or marker.get("label") or "Motorista"
             marker_box = ft.Container(
                 content=ft.Column(
                     [
-                        ft.Icon(ft.Icons.LOCAL_SHIPPING, size=18, color=ft.Colors.WHITE),
+                        ft.Text(
+                            str(marker.get("title") or marker.get("label") or "📍"),
+                            size=20,
+                            color=ft.Colors.WHITE,
+                            text_align=ft.TextAlign.CENTER,
+                        ),
                         ft.Text(label, size=10, color=ft.Colors.WHITE, text_align=ft.TextAlign.CENTER),
                     ],
                     tight=True,
                     spacing=2,
                 ),
-                width=110,
-                height=52,
+                width=marker_width,
+                height=marker_height,
                 padding=8,
                 border_radius=12,
                 bgcolor=marker_bg,
@@ -125,10 +149,10 @@ class MapView:
             )
             stack_children.append(
                 ft.Container(
-                    left=x,
-                    top=y,
-                    width=110,
-                    height=52,
+                    left=x - marker_width / 2,
+                    top=y - marker_height / 2,
+                    width=marker_width,
+                    height=marker_height,
                     content=marker_box,
                 )
             )
@@ -149,6 +173,13 @@ class MapView:
 
     def set_markers(self, markers: list):
         self.markers = markers or []
+        print(f"MAP MARKERS RECEIVED -> quantidade={len(self.markers)}")
+        for marker in self.markers:
+            marker_type = marker.get("title") or marker.get("label") or "desconhecido"
+            print(
+                f"MAP MARKER -> tipo={marker_type} "
+                f"lat={marker.get('lat')} lng={marker.get('lng')}"
+            )
         self._refresh()
 
     def add_marker(self, marker: dict):
@@ -214,24 +245,27 @@ class MapView:
         except Exception:
             pass
 
-    def _build_polyline_segments(self, route_points, map_width, map_height, padding=16):
+    def _build_polyline_segments(self, route_points, map_width, map_height, padding=16, bounds=None):
         if not route_points:
             return []
-        latitudes = [p[0] for p in route_points]
-        longitudes = [p[1] for p in route_points]
-        min_lat, max_lat = min(latitudes), max(latitudes)
-        min_lng, max_lng = min(longitudes), max(longitudes)
-        if min_lat == max_lat:
-            min_lat -= 0.01
-            max_lat += 0.01
-        if min_lng == max_lng:
-            min_lng -= 0.01
-            max_lng += 0.01
+        if bounds is None:
+            latitudes = [p[0] for p in route_points]
+            longitudes = [p[1] for p in route_points]
+            min_lat, max_lat = min(latitudes), max(latitudes)
+            min_lng, max_lng = min(longitudes), max(longitudes)
+            if min_lat == max_lat:
+                min_lat -= 0.01
+                max_lat += 0.01
+            if min_lng == max_lng:
+                min_lng -= 0.01
+                max_lng += 0.01
+        else:
+            min_lat, max_lat, min_lng, max_lng = bounds
 
         pixels = []
         for lat, lng in route_points:
-            x = padding + int((lng - min_lng) / (max_lng - min_lng) * (map_width - padding * 2))
-            y = padding + int((max_lat - lat) / (max_lat - min_lat) * (map_height - padding * 2))
+            x = padding + (lng - min_lng) / (max_lng - min_lng) * (map_width - padding * 2)
+            y = padding + (max_lat - lat) / (max_lat - min_lat) * (map_height - padding * 2)
             pixels.append((x, y))
 
         segment_children = []

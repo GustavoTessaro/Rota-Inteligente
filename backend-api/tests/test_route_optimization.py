@@ -1,11 +1,56 @@
 from decimal import Decimal
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.models import Endereco, Entrega, Rota, RotaEntrega, StatusEntrega
-from app.services.google_maps_service import GoogleMapsService
+from app.services.google_maps_service import GoogleMapsService, _encode_polyline
+
+
+def _decode_polyline(encoded: str) -> list[tuple[float, float]]:
+    points = []
+    index = 0
+    lat = 0
+    lng = 0
+    while index < len(encoded):
+        deltas = []
+        for _ in range(2):
+            result = 0
+            shift = 0
+            while True:
+                byte = ord(encoded[index]) - 63
+                index += 1
+                result |= (byte & 0x1F) << shift
+                shift += 5
+                if byte < 0x20:
+                    break
+            deltas.append(~(result >> 1) if result & 1 else result >> 1)
+        lat += deltas[0]
+        lng += deltas[1]
+        points.append((lat / 100000, lng / 100000))
+    return points
+
+
+def test_encode_polyline_round_trip_preserves_absolute_coordinates() -> None:
+    points = [
+        {"lat": -27.811516, "lng": -50.319300},
+        {"lat": -27.824925, "lng": -50.347499},
+        {"lat": -27.798533, "lng": -50.337620},
+    ]
+
+    decoded = _decode_polyline(_encode_polyline(points))
+
+    print("ORIGINAL_FIRST =", (points[0]["lat"], points[0]["lng"]))
+    print("DECODED_FIRST =", decoded[0])
+    print("ORIGINAL_LAST =", (points[-1]["lat"], points[-1]["lng"]))
+    print("DECODED_LAST =", decoded[-1])
+
+    assert len(decoded) == len(points)
+    for original, actual in zip(points, decoded):
+        assert actual[0] == pytest.approx(original["lat"], abs=1e-5)
+        assert actual[1] == pytest.approx(original["lng"], abs=1e-5)
 
 
 def test_default_route_optimization_emits_real_metrics() -> None:

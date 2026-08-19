@@ -2,6 +2,7 @@ import os
 from urllib.parse import urlsplit, urlunsplit
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
+MAPTILER_API_KEY = os.getenv("MAPTILER_API_KEY", "")
 
 
 def build_tracking_ws_url(api_base_url: str | None = None) -> str:

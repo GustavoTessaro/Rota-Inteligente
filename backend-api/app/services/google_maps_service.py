@@ -23,34 +23,12 @@ def _encode_polyline(points: List[Dict[str, float]]) -> str:
     if not points:
         return ""
 
-    def encode(value: float) -> str:
-        scaled = int(round(value * 1_000_000))
-        if scaled < 0:
-            scaled = -scaled
-            byte_string = []
-            while scaled:
-                rem = scaled & 0x1F
-                scaled >>= 5
-                if rem >= 0x20:
-                    rem += 0x20
-                byte_string.append(rem)
-            return ''.join(chr(b + 63) for b in byte_string)
-
-        encoded = []
-        while scaled:
-            rem = scaled & 0x1F
-            scaled >>= 5
-            if rem >= 0x20:
-                rem += 0x20
-            encoded.append(rem)
-        return ''.join(chr(b + 63) for b in encoded)
-
     encoded = []
     prev_lat = 0
     prev_lng = 0
     for point in points:
-        lat = int(round(point["lat"] * 1_000_000))
-        lng = int(round(point["lng"] * 1_000_000))
+        lat = int(round(point["lat"] * 100_000))
+        lng = int(round(point["lng"] * 100_000))
         dlat = lat - prev_lat
         dlng = lng - prev_lng
         prev_lat = lat
@@ -61,12 +39,10 @@ def _encode_polyline(points: List[Dict[str, float]]) -> str:
             if value < 0:
                 shifted = ~shifted
             bits = []
-            while shifted:
-                rem = shifted & 0x1F
+            while shifted >= 0x20:
+                bits.append((shifted & 0x1F) | 0x20)
                 shifted >>= 5
-                if rem >= 0x20:
-                    rem += 0x20
-                bits.append(rem)
+            bits.append(shifted)
             encoded.append(bits)
 
     result = []

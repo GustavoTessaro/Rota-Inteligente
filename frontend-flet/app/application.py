@@ -1,5 +1,6 @@
 ﻿from datetime import datetime, timezone
 from urllib.parse import quote
+import math
 
 import asyncio
 import json
@@ -7,6 +8,7 @@ import threading
 import time
 
 import flet as ft
+import flet_map as fmap
 
 try:
     import websockets
@@ -14,7 +16,7 @@ except Exception:  # pragma: no cover - optional dependency during import
     websockets = None
 
 from .api_client import ApiClient, ApiError
-from .config import build_tracking_ws_url
+from .config import MAPTILER_API_KEY, build_tracking_ws_url
 from .dashboard_utils import DASHBOARD_INDICATORS, DashboardRefreshController, get_dashboard_indicator_values
 from .map_view import MapView
 from .tracking_client import build_marker, update_vehicle_state
@@ -942,37 +944,9 @@ class DeliveryApp:
             print("ADDRESS_RAW =", endereco)
             print("OPERACAO =", route.get("organizacao", {}).get("nome"))
 
-            # Mapa com polyline da rota
+            # Mapa real com tiles OSM, marcadores do payload e route_geometry.
             operation_name = (route.get("organizacao") or {}).get("nome") or "Operação não informada"
-            map_control = MapView(title=operation_name, height=280, width=920).build()
-            route_map = map_control
-            encoded = route.get("route_geometry") or route.get("routeGeometry")
-            print("DEBUG driver_route_view geometry_present=", bool(encoded), "geometry_len=", len(encoded) if encoded else 0)
-            if encoded:
-                try:
-                    map_control.draw_polyline(encoded)
-                    print("DEBUG driver_route_view polyline desenhado")
-                except Exception as exc:
-                    print("DEBUG driver_route_view erro no draw_polyline=", exc)
-                    pass
-
-            if stops:
-                markers = []
-                for index, stop in enumerate(stops, start=1):
-                    address = stop.get("address") or {}
-                    lat = address.get("latitude")
-                    lng = address.get("longitude")
-                    if lat is None or lng is None:
-                        continue
-                    markers.append({
-                        "id": f"stop-{index}",
-                        "lat": float(lat),
-                        "lng": float(lng),
-                        "title": f"{index}",
-                        "label": str(index),
-                    })
-                if markers:
-                    map_control.set_markers(markers)
+            route_map = self._render_driver_map_native(route, stops)
 
             # Cards de paradas com dados reais de cliente e endereço
             stop_cards = []
@@ -1634,31 +1608,138 @@ class DeliveryApp:
             "next_stop": next_stop,
         }
 
+    def _render_driver_map_native(self, route, stops):
+        origin = route.get("origem") or {}
+        origin_point = None
+        if origin.get("latitude") is not None and origin.get("longitude") is not None:
+            origin_point = fmap.MapLatitudeLongitude(
+                float(origin["latitude"]), float(origin["longitude"])
+            )
+
+        route_points = [
+            fmap.MapLatitudeLongitude(lat, lng)
+            for lat, lng in MapView._decode_polyline(
+                route.get("route_geometry") or route.get("routeGeometry") or ""
+            )
+        ]
+        marker_points = [
+            (origin_point, "🏢", "Origem", self._format_driver_address(origin), "origin")
+        ] if origin_point else []
+
+        next_delivery_id = (route.get("proxima_entrega") or {}).get("entrega_id")
+        for stop in stops:
+            address = stop.get("address") or stop.get("destino") or {}
+            if address.get("latitude") is None or address.get("longitude") is None:
+                continue
+            coordinates = fmap.MapLatitudeLongitude(
+                float(address["latitude"]), float(address["longitude"])
+            )
+            delivery_id = stop.get("delivery", {}).get("id")
+            is_current = delivery_id == next_delivery_id
+            customer = stop.get("cliente") or {}
+            customer_name = customer.get("nome") or customer.get("razao_social") or "Cliente não informado"
+            marker_points.append((
+                coordinates,
+                "📍" if is_current else str(stop.get("order") or len(marker_points)),
+                customer_name,
+                self._format_driver_address(address),
+                "current" if is_current else "stop",
+            ))
+
+        all_points = [(point.latitude, point.longitude) for point in route_points]
+        all_points.extend((point.latitude, point.longitude) for point, *_ in marker_points)
+        if not all_points:
+            all_points = [(-27.816, -50.325)]
+        center_lat = sum(point[0] for point in all_points) / len(all_points)
+        center_lng = sum(point[1] for point in all_points) / len(all_points)
+        latitude_span = max(max(point[0] for point in all_points) - min(point[0] for point in all_points), 0.001)
+        longitude_span = max(max(point[1] for point in all_points) - min(point[1] for point in all_points), 0.001)
+        zoom = max(3, min(18, int(min(math.log2(360 / longitude_span), math.log2(170 / latitude_span)) - 1)))
+
+        markers = []
+        for coordinates, label, title, address, marker_kind in marker_points:
+            color = ft.Colors.GREEN_700 if marker_kind == "origin" else ft.Colors.RED_600 if marker_kind == "current" else ft.Colors.INDIGO
+            markers.append(
+                fmap.Marker(
+                    content=ft.Container(
+                        content=ft.Text(label, size=18, color=ft.Colors.WHITE, text_align=ft.TextAlign.CENTER),
+                        width=34 if marker_kind == "current" else 30,
+                        height=34 if marker_kind == "current" else 30,
+                        alignment=ft.alignment.center,
+                        bgcolor=color,
+                        border_radius=20,
+                        tooltip=f"{title}\n{address}",
+                    ),
+                    coordinates=coordinates,
+                )
+            )
+
+        layers = [
+            fmap.TileLayer(
+                url_template=(
+                    "https://api.maptiler.com/maps/streets-v4/"
+                    "{z}/{x}/{y}.png?key=" + MAPTILER_API_KEY
+                )
+            ),
+            fmap.SimpleAttribution(text="© MapTiler © OpenStreetMap contributors"),
+        ]
+        if len(route_points) >= 2:
+            layers.append(
+                fmap.PolylineLayer(
+                    polylines=[fmap.PolylineMarker(
+                        coordinates=route_points,
+                        color=ft.Colors.BLUE_700,
+                        stroke_width=5,
+                    )]
+                )
+            )
+        layers.append(fmap.MarkerLayer(markers=markers))
+
+        return fmap.Map(
+            layers=layers,
+            initial_center=fmap.MapLatitudeLongitude(center_lat, center_lng),
+            initial_zoom=zoom,
+            width=920,
+            height=280,
+            expand=True,
+        )
+
     def _build_route_leaflet_map(self, route, stops):
         origin = route.get("origem") or {}
-        route_points = []
+        fallback_points = []
+        markers = []
         if origin.get("latitude") is not None and origin.get("longitude") is not None:
-            route_points.append([float(origin["latitude"]), float(origin["longitude"])])
+            origin_point = [float(origin["latitude"]), float(origin["longitude"])]
+            fallback_points.append(origin_point)
+            markers.append({
+                "lat": origin_point[0],
+                "lng": origin_point[1],
+                "kind": "origin",
+                "label": "🏢",
+                "popup": self._format_driver_address(origin),
+            })
         for stop in stops:
             address = stop.get("address") or stop.get("destino") or {}
             lat = address.get("latitude")
             lng = address.get("longitude")
             if lat is not None and lng is not None:
-                route_points.append([float(lat), float(lng)])
-        if len(route_points) < 2:
-            fallback = []
-            if origin.get("latitude") is not None and origin.get("longitude") is not None:
-                fallback.append([float(origin["latitude"]), float(origin["longitude"])])
-            next_stop = route.get("proxima_entrega") or {}
-            destino = next_stop.get("destino") or {}
-            if destino.get("latitude") is not None and destino.get("longitude") is not None:
-                fallback.append([float(destino["latitude"]), float(destino["longitude"])])
-            route_points = fallback
+                delivery_id = stop.get("delivery", {}).get("id")
+                next_delivery_id = (route.get("proxima_entrega") or {}).get("entrega_id")
+                is_current = delivery_id == next_delivery_id
+                customer = stop.get("cliente") or {}
+                customer_name = customer.get("nome") or customer.get("razao_social") or "Cliente não informado"
+                address_text = self._format_driver_address(address).replace("\n", "<br>")
+                markers.append({
+                    "lat": float(lat),
+                    "lng": float(lng),
+                    "kind": "current" if is_current else "stop",
+                    "label": "📍" if is_current else str(stop.get("order") or len(markers)),
+                    "popup": f"{customer_name}<br>{address_text}",
+                })
 
-        if len(route_points) < 2:
-            route_points = [[-27.816, -50.325], [-27.83, -50.35]]
-
-        points_json = json.dumps(route_points)
+        points_json = json.dumps(fallback_points)
+        markers_json = json.dumps(markers, ensure_ascii=False)
+        geometry_json = json.dumps(route.get("route_geometry") or route.get("routeGeometry"))
         html = f"""
         <!doctype html>
         <html>
@@ -1669,30 +1750,49 @@ class DeliveryApp:
           <style>
             html, body {{ height: 100%; margin: 0; padding: 0; }}
             #map {{ height: 100%; width: 100%; min-height: 300px; border-radius: 14px; }}
+            .route-marker {{ background: #2563eb; color: white; border: 2px solid white; border-radius: 50%; width: 30px; height: 30px; line-height: 26px; text-align: center; font-size: 16px; font-weight: 700; box-shadow: 0 1px 5px rgba(0,0,0,.45); }}
+            .route-marker.origin {{ background: #15803d; }}
+            .route-marker.current {{ background: #dc2626; width: 36px; height: 36px; line-height: 32px; font-size: 20px; }}
           </style>
         </head>
         <body>
           <div id="map"></div>
           <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
           <script>
-            const routePoints = {points_json};
-            const map = L.map('map').setView(routePoints[0], 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {{
+                        const fallbackPoints = {points_json};
+                        const markers = {markers_json};
+                        const encodedGeometry = {geometry_json};
+                        function decodePolyline(encoded) {{
+                            if (!encoded) return [];
+                            const points = []; let index = 0; let lat = 0; let lng = 0;
+                            while (index < encoded.length) {{
+                                const values = [];
+                                for (let coordinate = 0; coordinate < 2; coordinate++) {{
+                                    let result = 0; let shift = 0; let byte;
+                                    do {{ byte = encoded.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; }} while (byte >= 0x20);
+                                    values.push((result & 1) ? ~(result >> 1) : (result >> 1));
+                                }}
+                                lat += values[0]; lng += values[1]; points.push([lat / 100000, lng / 100000]);
+                            }}
+                            return points;
+                        }}
+                        const routePoints = decodePolyline(encodedGeometry);
+                        const visiblePoints = routePoints.length ? routePoints : fallbackPoints;
+                        const map = L.map('map').setView(visiblePoints[0] || [-27.816, -50.325], 13);
+            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
               attribution: '&copy; OpenStreetMap contributors'
             }}).addTo(map);
 
-            const routeLine = L.polyline(routePoints, {{ color: '#1d4ed8', weight: 5, opacity: 0.9 }}).addTo(map);
-            const bounds = routeLine.getBounds();
-            map.fitBounds(bounds.pad(0.35));
-
-            const origin = routePoints[0];
-            const originMarker = L.marker(origin).addTo(map);
-            originMarker.bindPopup('Origem');
-
-            routePoints.slice(1).forEach((point, index) => {{
-              const marker = L.marker(point).addTo(map);
-              marker.bindPopup(`Parada ${index + 1}`);
-            }});
+                        const bounds = L.latLngBounds([]);
+                        if (routePoints.length) L.polyline(routePoints, {{ color: '#1d4ed8', weight: 5, opacity: 0.9 }}).addTo(map);
+                        markers.forEach(item => {{
+                            const icon = L.divIcon({{ className: '', html: `<div class="route-marker ${{item.kind}}">${{item.label}}</div>`, iconSize: [36, 36], iconAnchor: [18, 18] }});
+                            const marker = L.marker([item.lat, item.lng], {{ icon }}).addTo(map);
+                            marker.bindPopup(item.popup, {{ closeButton: true }});
+                            bounds.extend([item.lat, item.lng]);
+                        }});
+                        routePoints.forEach(point => bounds.extend(point));
+                        if (!bounds.isEmpty()) map.fitBounds(bounds.pad(0.12));
           </script>
         </body>
         </html>

@@ -71,6 +71,19 @@ def ensure_backend_env() -> None:
         print("Backend .env already configured for SQLite.")
 
 
+def load_frontend_map_config() -> None:
+    if os.getenv("MAPTILER_API_KEY"):
+        print("MAPTILER_API_KEY carregada =", True)
+        return
+    for line in BACKEND_ENV.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "MAPTILER_API_KEY":
+            os.environ["MAPTILER_API_KEY"] = value.strip().strip('"').strip("'")
+            print("MAPTILER_API_KEY carregada =", bool(os.environ["MAPTILER_API_KEY"]))
+            return
+    print("MAPTILER_API_KEY carregada = False")
+
+
 def start_process(command: list[str], cwd: Path, title: str) -> subprocess.Popen:
     print(f"Starting {title}: {' '.join(command)}")
     creationflags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
@@ -85,6 +98,7 @@ def start_process(command: list[str], cwd: Path, title: str) -> subprocess.Popen
 if __name__ == "__main__":
     try:
         ensure_backend_env()
+        load_frontend_map_config()
 
         ensure_venv(BACKEND_VENV)
         ensure_venv(ROOT_VENV)

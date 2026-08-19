@@ -11,6 +11,10 @@ def test_driver_route_snapshot_uses_route_payload_directly():
                 "sequencia_otimizada": 1,
                 "status": "AGUARDANDO_COLETA",
                 "pedido_id": 17,
+                "cliente": {
+                    "id": 6,
+                    "nome": "IFSC",
+                },
                 "destino": {
                     "logradouro": "Rua Doutor Aujor Luz",
                     "numero": "432",
@@ -26,6 +30,10 @@ def test_driver_route_snapshot_uses_route_payload_directly():
                 "sequencia_otimizada": 2,
                 "status": "AGUARDANDO_COLETA",
                 "pedido_id": 16,
+                "cliente": {
+                    "id": 7,
+                    "nome": "Mezzalira",
+                },
                 "destino": {
                     "logradouro": "Rua Heitor Villa-Lobos",
                     "numero": "225",
