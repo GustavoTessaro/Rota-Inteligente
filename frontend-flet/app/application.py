@@ -906,6 +906,8 @@ class DeliveryApp:
                 self.notify("Nenhuma rota ativa encontrada.", True)
                 return
 
+            loading_confirmed = bool(route.get("carga_confirmada", False))
+
             print("DEBUG driver_route_view route_status=", route.get("status"), "route_keys=", sorted(route.keys())[:20])
 
             # Obter dados reais de cliente e endereço para cada parada
@@ -988,12 +990,24 @@ class DeliveryApp:
             # Botões contextuais por status
             action_buttons = []
             if route_status in {"PRONTA", "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO"}:
+                def verify_load_click(_):
+                    print("VERIFY_LOAD_CLICK route_id=", route.get("id"))
+                    print("VERIFY_LOAD_STOPS_COUNT=", len(stops))
+                    print("FLET_PAGE_TYPE=", type(self.page).__name__)
+                    print("PAGE_HAS_OPEN=", callable(getattr(self.page, "open", None)))
+                    print("PAGE_DIALOG_BEFORE=", getattr(self.page, "dialog", None))
+                    try:
+                        self.loading_order_dialog(route, stops)
+                    except Exception as exc:
+                        print("LOADING_DIALOG_ERROR=", type(exc).__name__, str(exc))
+                        raise
+
                 action_buttons.append(
                     ft.FilledButton(
                         "Verificar carga",
                         icon=ft.Icons.CHECKLIST,
                         expand=True,
-                        on_click=lambda _: self.loading_order_dialog(route, stops),
+                        on_click=verify_load_click,
                     )
                 )
                 
@@ -1816,65 +1830,79 @@ class DeliveryApp:
         Mostra os pedidos em ordem inversa (último a ser entregue primeiro a ser carregado)
         e exige confirmação antes de permitir iniciar a viagem.
         """
-        dlg = ft.AlertDialog(title=ft.Text("Ordem de carregamento"), scrollable=True)
-        content_list = []
-
-        content_list.append(
-            ft.Container(
-                content=ft.Text(
-                    "Confirme que os pedidos estão na ordem correta no veículo.\n"
-                    "Último pedido (embaixo) primeiro a ser carregado.",
-                    size=12,
-                    color=ft.Colors.GREY_700,
-                ),
-                padding=16,
-                bgcolor=ft.Colors.AMBER_50,
-                border_radius=12,
-            )
-        )
-
-        # Mostrar paradas em ordem inversa
-        for stop in reversed(stops):
-            delivery = stop.get("delivery", {})
-            address = stop.get("address", {})
-            order = stop.get("order", 0)
-
-            client_name = self._driver_stop_label(stop)
-            formatted_address = self._driver_stop_address(stop)
+        print("LOADING_DIALOG_START")
+        print("LOADING_DIALOG_ITEMS=", len(stops))
+        try:
+            dlg = ft.AlertDialog(title=ft.Text("Ordem de carregamento"), scrollable=True)
+            content_list = []
 
             content_list.append(
                 ft.Container(
-                    content=ft.Column([
-                        ft.Text(f"Parada {order}: {client_name}", size=12, weight=ft.FontWeight.BOLD),
-                        ft.Text(formatted_address, size=10, color=ft.Colors.GREY_700),
-                        ft.Text(f"Pedido #{delivery.get('pedido_id', '--')}", size=10, color=ft.Colors.GREY_600),
-                    ], spacing=4),
-                    padding=12,
-                    margin=ft.margin.only(bottom=8),
-                    border_radius=8,
-                    bgcolor=ft.Colors.BLUE_50,
-                    border=ft.border.all(1, ft.Colors.BLUE_200),
+                    content=ft.Text(
+                        "Confirme que os pedidos estão na ordem correta no veículo.\n"
+                        "Último pedido (embaixo) primeiro a ser carregado.",
+                        size=12,
+                        color=ft.Colors.GREY_700,
+                    ),
+                    padding=16,
+                    bgcolor=ft.Colors.AMBER_50,
+                    border_radius=12,
                 )
             )
 
-        dlg.content = ft.Column(
-            content_list,
-            scroll=ft.ScrollMode.AUTO,
-        )
+            # Mostrar paradas em ordem inversa
+            for stop in reversed(stops):
+                delivery = stop.get("delivery", {})
+                address = stop.get("address", {})
+                order = stop.get("order", 0)
 
-        def confirm_and_close(_):
-            dlg.open = False
-            self.page.update()
-            self.driver_route_view(route.get("id"), loading_confirmed=True)
+                client_name = self._driver_stop_label(stop)
+                formatted_address = self._driver_stop_address(stop)
 
-        dlg.actions = [
-            ft.TextButton("Cancelar", on_click=lambda _: self._close_dialog(dlg)),
-            ft.FilledButton("Confirmar carga", on_click=confirm_and_close),
-        ]
+                content_list.append(
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text(f"Parada {order}: {client_name}", size=12, weight=ft.FontWeight.BOLD),
+                            ft.Text(formatted_address, size=10, color=ft.Colors.GREY_700),
+                            ft.Text(f"Pedido #{delivery.get('pedido_id', '--')}", size=10, color=ft.Colors.GREY_600),
+                        ], spacing=4),
+                        padding=12,
+                        margin=ft.margin.only(bottom=8),
+                        border_radius=8,
+                        bgcolor=ft.Colors.BLUE_50,
+                        border=ft.border.all(1, ft.Colors.BLUE_200),
+                    )
+                )
 
-        self.page.dialog = dlg
-        dlg.open = True
-        self.page.update()
+            dlg.content = ft.Column(
+                content_list,
+                scroll=ft.ScrollMode.AUTO,
+            )
+
+            def confirm_and_close(_):
+                try:
+                    self.api.request("PATCH", f"/rotas/{route['id']}/confirmar-carga")
+                    dlg.open = False
+                    self.page.update()
+                    self.driver_route_view(route.get("id"))
+                except ApiError as exc:
+                    self.notify(str(exc), True)
+
+            dlg.actions = [
+                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dlg)),
+                ft.FilledButton("Confirmar carga", on_click=confirm_and_close),
+            ]
+            print("LOADING_DIALOG_CREATED")
+            print("LOADING_DIALOG_ACTIONS=", dlg.actions is not None)
+            print("PAGE_DIALOG_BEFORE=", getattr(self.page, "dialog", None))
+            print("DIALOG_OPEN_VALUE=", dlg.open)
+            self.open_dialog(dlg)
+            print("PAGE_DIALOG_AFTER=", getattr(self.page, "dialog", None))
+            print("DIALOG_OPEN_VALUE=", dlg.open)
+            print("LOADING_DIALOG_OPEN")
+        except Exception as exc:
+            print("LOADING_DIALOG_ERROR=", type(exc).__name__, str(exc))
+            raise
 
     def _start_route_execution(self, route):
         """

@@ -37,6 +37,75 @@ def _seed_possibly_unassigned_driver(client: TestClient, admin_headers: dict, na
         return user
 
 
+def _create_persisted_driver_route(admin_headers: dict, client: TestClient, driver_id: int, status: StatusRota = StatusRota.PRONTA) -> int:
+    orgs = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()
+    with SessionLocal() as db:
+        route = Rota(
+            nome="Rota para confirmação de carga",
+            descricao="Teste de persistência da carga",
+            organizacao_id=orgs[0]["id"],
+            motorista_id=driver_id,
+            status=status,
+        )
+        db.add(route)
+        db.commit()
+        db.refresh(route)
+        return route.id
+
+
+def test_route_loading_confirmation_is_persisted_and_scoped(client: TestClient, admin_headers: dict) -> None:
+    users = client.get("/api/usuarios?limit=100&offset=0", headers=admin_headers).json()
+    drivers = [item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"]]
+    driver, other_driver = drivers[0], drivers[1]
+    route_id = _create_persisted_driver_route(admin_headers, client, driver["id"])
+    driver_headers = _login(client, driver["email"])
+    other_driver_headers = _login(client, other_driver["email"])
+
+    initial = client.get("/api/rotas/motorista/atual", headers=driver_headers)
+    assert initial.status_code == 200
+    assert initial.json()["carga_confirmada"] is False
+
+    confirmed = client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=driver_headers)
+    assert confirmed.status_code == 200
+    assert confirmed.json()["carga_confirmada"] is True
+
+    repeated = client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=driver_headers)
+    assert repeated.status_code == 200
+    assert repeated.json()["carga_confirmada"] is True
+
+    reloaded = client.get("/api/rotas/motorista/atual", headers=driver_headers)
+    assert reloaded.status_code == 200
+    assert reloaded.json()["carga_confirmada"] is True
+
+    forbidden = client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=other_driver_headers)
+    assert forbidden.status_code == 403
+
+
+def test_route_loading_confirmation_rejects_finished_or_cancelled_routes(client: TestClient, admin_headers: dict) -> None:
+    users = client.get("/api/usuarios?limit=100&offset=0", headers=admin_headers).json()
+    driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
+    driver_headers = _login(client, driver["email"])
+    route_id = _create_persisted_driver_route(admin_headers, client, driver["id"])
+
+    with SessionLocal() as db:
+        route = db.get(Rota, route_id)
+        assert route is not None
+        route.status = StatusRota.CANCELADA
+        db.commit()
+
+    response = client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=driver_headers)
+    assert response.status_code == 422
+
+    with SessionLocal() as db:
+        route = db.get(Rota, route_id)
+        assert route is not None
+        route.status = StatusRota.FINALIZADA
+        db.commit()
+
+    response = client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=driver_headers)
+    assert response.status_code == 422
+
+
 def test_get_motorista_rota_atual_returns_active_route(client: TestClient, admin_headers: dict) -> None:
     users = client.get("/api/usuarios?limit=100&offset=0", headers=admin_headers).json()
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])

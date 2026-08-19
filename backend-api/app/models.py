@@ -160,6 +160,7 @@ class Rota(TimestampMixin, Base):
     data_conclusao: Mapped[datetime | None] = mapped_column(DateTime)
     origem_endereco_id: Mapped[int | None] = mapped_column(ForeignKey("enderecos.id"), index=True)
     destino_endereco_id: Mapped[int | None] = mapped_column(ForeignKey("enderecos.id"), index=True)
+    carga_confirmada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     distancia_prevista: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     duracao_prevista: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     distancia_real: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)

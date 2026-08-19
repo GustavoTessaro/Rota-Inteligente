@@ -14,6 +14,7 @@ from ..deps import (
     commit,
     ensure_route_access_scope,
     ensure_route_payload_scope,
+    ensure_delivery_can_be_routed,
     get_or_404,
     staff,
     validate_driver,
@@ -33,6 +34,7 @@ from ..models import (
     RotaHistorico,
     RotaPosicao,
     StatusEntrega,
+    StatusPedido,
     TipoEventoRota,
     Usuario,
     Veiculo,
@@ -281,8 +283,25 @@ def generate_route_from_orders(data: RotaGerarIn, db: Session = Depends(get_db),
 
     deliveries = []
     for pedido in orders:
-        existing = db.scalar(select(Entrega).where(Entrega.pedido_id == pedido.id))
-        if existing is None:
+        existing_deliveries = db.scalars(
+            select(Entrega).where(Entrega.pedido_id == pedido.id).order_by(Entrega.id)
+        ).all()
+        if pedido.status in {StatusPedido.FINALIZADO, StatusPedido.CANCELADO}:
+            raise HTTPException(422, f"Pedido {pedido.id} não pode entrar em nova rota no estado {pedido.status.value}")
+        if any(item.status == StatusEntrega.ENTREGUE for item in existing_deliveries):
+            raise HTTPException(422, f"Pedido {pedido.id} já possui entrega concluída")
+        eligible_deliveries = [
+            item for item in existing_deliveries
+            if item.status not in {StatusEntrega.ENTREGUE, StatusEntrega.CANCELADA}
+        ]
+        if len(eligible_deliveries) > 1:
+            raise HTTPException(422, f"Pedido {pedido.id} possui múltiplas entregas operacionais")
+        existing = eligible_deliveries[0] if eligible_deliveries else None
+        if existing is not None:
+            ensure_delivery_can_be_routed(db, pedido, existing)
+        else:
+            if existing_deliveries:
+                raise HTTPException(422, f"Pedido {pedido.id} não possui entrega elegível para nova rota")
             existing = Entrega(
                 pedido_id=pedido.id,
                 entregador_id=data.motorista_id,
@@ -462,6 +481,7 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
             "data_conclusao": rota.data_conclusao.isoformat() if rota.data_conclusao else None,
             "origem_endereco_id": rota.origem_endereco_id,
             "destino_endereco_id": rota.destino_endereco_id,
+            "carga_confirmada": rota.carga_confirmada,
             "origem": origem,
             "route_geometry": rota.route_geometry,
             "entregas": entregas,
@@ -536,6 +556,21 @@ def get_current_driver_route(
         print("=== DRIVER CURRENT ROUTE ERROR ===")
         traceback.print_exc()
         raise
+
+
+@router.patch("/{rota_id}/confirmar-carga", response_model=RotaOut)
+def confirm_route_loading(
+    rota_id: int,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(current_user),
+):
+    rota = get_or_404(db, Rota, rota_id)
+    ensure_route_access_scope(user, rota)
+    if rota.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA}:
+        raise HTTPException(422, "Rota concluída ou cancelada não aceita confirmação de carga")
+    rota.carga_confirmada = True
+    commit(db)
+    return rota
 
 
 @router.get("/{rota_id}/sequencia-carregamento")

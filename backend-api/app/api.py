@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import get_db
+from .deps import apply_delivery_status as shared_apply_delivery_status
 from .models import (
     Cliente,
     ComprovanteEntrega,
@@ -804,16 +805,7 @@ def update_delivery_status(
         raise HTTPException(422, "Informe a justificativa para reabrir a entrega")
     if data.status == StatusEntrega.ENTREGUE and not delivery.comprovante:
         raise HTTPException(422, "Registre o comprovante antes de concluir a entrega")
-    previous = delivery.status
-    delivery.status = data.status
-    if data.status == StatusEntrega.COLETADA and not delivery.data_coleta:
-        delivery.data_coleta = datetime.now()
-    if data.status == StatusEntrega.ENTREGUE:
-        delivery.data_entrega = datetime.now()
-    db.add(HistoricoEntrega(
-        entrega_id=delivery.id, status_anterior=previous.value,
-        status_novo=data.status.value, observacao=data.observacao, alterado_por=user.id,
-    ))
+    shared_apply_delivery_status(db, delivery, data.status, data.observacao, user.id)
     commit(db)
     return delivery
 

@@ -19,6 +19,7 @@ from .models import (
     RotaEntrega,
     RotaHistorico,
     StatusEntrega,
+    StatusPedido,
     StatusRota,
     Usuario,
     Veiculo,
@@ -30,6 +31,24 @@ from .services.google_maps_service import get_geocoding_service
 admin = require_roles(Perfil.ADMIN)
 staff = require_roles(Perfil.ADMIN, Perfil.GESTOR)
 delivery_roles = require_roles(Perfil.ADMIN, Perfil.GESTOR, Perfil.MOTORISTA)
+
+ACTIVE_ROUTE_STATUSES = {
+    StatusRota.RASCUNHO,
+    StatusRota.OTIMIZANDO,
+    StatusRota.PLANEJADA,
+    StatusRota.AGUARDANDO_ACEITE,
+    StatusRota.AGUARDANDO_MOTORISTA,
+    StatusRota.AGUARDANDO_VEICULO,
+    StatusRota.PRONTA,
+    StatusRota.EM_EXECUCAO,
+    StatusRota.PAUSADA,
+}
+
+TERMINAL_DELIVERY_STATUSES = {
+    StatusEntrega.ENTREGUE,
+    StatusEntrega.NAO_ENTREGUE,
+    StatusEntrega.CANCELADA,
+}
 
 
 def get_or_404(db: Session, model, item_id: int):
@@ -161,6 +180,43 @@ def validate_route_delivery_entries(db: Session, route_data):
         entrega = get_or_404(db, Entrega, entry.entrega_id)
         if entrega.status == StatusEntrega.CANCELADA:
             raise HTTPException(422, "Entrega cancelada não pode fazer parte da rota")
+
+
+def ensure_delivery_can_be_routed(db: Session, pedido: Pedido, delivery: Entrega):
+    if pedido.status in {StatusPedido.FINALIZADO, StatusPedido.CANCELADO}:
+        raise HTTPException(422, f"Pedido {pedido.id} não pode entrar em nova rota no estado {pedido.status.value}")
+    if delivery.status in {StatusEntrega.ENTREGUE, StatusEntrega.CANCELADA}:
+        raise HTTPException(422, f"Pedido {pedido.id} possui entrega terminal e não pode entrar em rota normal")
+    active_route = db.scalar(
+        select(Rota)
+        .join(RotaEntrega, RotaEntrega.rota_id == Rota.id)
+        .where(RotaEntrega.entrega_id == delivery.id)
+        .where(Rota.status.in_(ACTIVE_ROUTE_STATUSES))
+    )
+    if active_route is not None:
+        raise HTTPException(422, f"Entrega {delivery.id} já está vinculada à rota ativa {active_route.id}")
+
+
+def apply_delivery_status(db: Session, delivery: Entrega, new_status: StatusEntrega, observation: str | None, user_id: int):
+    if delivery.status == StatusEntrega.ENTREGUE and new_status != StatusEntrega.ENTREGUE:
+        raise HTTPException(422, "Entrega ENTREGUE não pode voltar a um estado operacional")
+    previous = delivery.status
+    delivery.status = new_status
+    if new_status == StatusEntrega.COLETADA and not delivery.data_coleta:
+        delivery.data_coleta = datetime.now()
+    if new_status == StatusEntrega.ENTREGUE:
+        delivery.data_entrega = datetime.now()
+        order = delivery.pedido
+        relevant = db.scalars(select(Entrega).where(Entrega.pedido_id == order.id)).all()
+        if relevant and all(item.status in TERMINAL_DELIVERY_STATUSES for item in relevant):
+            order.status = StatusPedido.FINALIZADO
+    db.add(HistoricoEntrega(
+        entrega_id=delivery.id,
+        status_anterior=previous.value,
+        status_novo=new_status.value,
+        observacao=observation,
+        alterado_por=user_id,
+    ))
 
 
 def geocode_address(db: Session, endereco: Endereco) -> dict:

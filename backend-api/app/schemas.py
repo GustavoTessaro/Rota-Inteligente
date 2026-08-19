@@ -353,6 +353,7 @@ class RotaOut(ORMModel):
     data_conclusao: datetime | None
     origem_endereco_id: int | None
     destino_endereco_id: int | None
+    carga_confirmada: bool = False
     distancia_prevista: float = Field(default=0.0, ge=0)
     duracao_prevista: float = Field(default=0.0, ge=0)
     distancia_real: float = Field(default=0.0, ge=0)
