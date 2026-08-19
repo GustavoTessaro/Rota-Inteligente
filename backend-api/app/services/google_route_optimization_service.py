@@ -96,9 +96,24 @@ class GoogleRouteOptimizationService:
                 for point in waypoints
             ]
 
-        response = httpx.post(self.OFFICIAL_ROUTES_URL, params={"key": self.api_key}, json=body, headers=headers, timeout=20)
-        response.raise_for_status()
-        return response.json()
+        print("GOOGLE_ROUTES_REQUEST = START")
+        try:
+            response = httpx.post(self.OFFICIAL_ROUTES_URL, params={"key": self.api_key}, json=body, headers=headers, timeout=20)
+            print("GOOGLE_ROUTES_STATUS =", response.status_code)
+            if response.status_code >= 400:
+                print("GOOGLE_ROUTES_ERROR_STATUS =", response.status_code)
+                print("GOOGLE_ROUTES_ERROR_BODY =", response.text)
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            response = exc.response
+            print("GOOGLE_ROUTES_ERROR_STATUS =", response.status_code if response is not None else "sem resposta")
+            print("GOOGLE_ROUTES_ERROR_BODY =", response.text if response is not None else str(exc))
+            raise
+        except httpx.RequestError as exc:
+            print("GOOGLE_ROUTES_ERROR_STATUS = sem resposta")
+            print("GOOGLE_ROUTES_ERROR_BODY =", str(exc))
+            raise
 
     def optimize_route(self,
                        origin: Optional[Dict[str, float]],
@@ -159,6 +174,10 @@ class GoogleRouteOptimizationService:
             poly = route.get("polyline") or {}
             if isinstance(poly, dict):
                 polyline = poly.get("encodedPolyline") or poly.get("points")
+
+            print("GOOGLE_ROUTES_DISTANCE_METERS =", distance)
+            print("GOOGLE_ROUTES_DURATION =", duration)
+            print("GOOGLE_ROUTES_POLYLINE_LENGTH =", len(polyline) if polyline else 0)
 
             score = int(distance or 0)
             if best_result is None or score < int(best_result.get("distance_meters") or 0):

@@ -141,11 +141,13 @@ class GoogleMapsService:
 
         # If configured, delegate to GoogleRouteOptimizationService for real optimization
         if settings.use_google_route_optimization:
+            print("ROUTE_PROVIDER = GOOGLE")
             try:
                 rosvc = GoogleRouteOptimizationService()
                 return rosvc.optimize_route(origin, destination, waypoints or [], vehicle_constraints, time_windows, vehicle_count=vehicle_count)
             except Exception:
                 # fallback to stub if any error occurs
+                print("ROUTE_PROVIDER = FALLBACK")
                 pass
 
         # Minimal deterministic fallback when no Google optimizer is configured.
