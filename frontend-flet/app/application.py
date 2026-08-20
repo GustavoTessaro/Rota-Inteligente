@@ -323,12 +323,22 @@ class DeliveryApp:
     def show_shell(self):
         driver = self.user["perfil"] == "MOTORISTA"
         admin_user = self.user["perfil"] == "ADMIN"
-        destinations = [
-            ft.NavigationRailDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
-            ft.NavigationRailDestination(icon=ft.Icons.LOCAL_SHIPPING, label="Gestão de Entregas"),
-            ft.NavigationRailDestination(icon=ft.Icons.TRIP_ORIGIN, label="Rotas"),
-        ]
-        if not driver:
+        
+        # Sidebar diferenciada por perfil
+        if driver:
+            # MOTORISTA: Dashboard, Minhas Rotas, Perfil
+            destinations = [
+                ft.NavigationRailDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
+                ft.NavigationRailDestination(icon=ft.Icons.TRIP_ORIGIN, label="Minhas Rotas"),
+                ft.NavigationRailDestination(icon=ft.Icons.PERSON, label="Perfil"),
+            ]
+        else:
+            # ADMIN/GESTOR: Dashboard, Gestão de Entregas, Rotas, Pedidos, Clientes, etc
+            destinations = [
+                ft.NavigationRailDestination(icon=ft.Icons.DASHBOARD, label="Dashboard"),
+                ft.NavigationRailDestination(icon=ft.Icons.LOCAL_SHIPPING, label="Gestão de Entregas"),
+                ft.NavigationRailDestination(icon=ft.Icons.TRIP_ORIGIN, label="Rotas"),
+            ]
             destinations += [
                 ft.NavigationRailDestination(icon=ft.Icons.RECEIPT_LONG, label="Pedidos"),
                 ft.NavigationRailDestination(icon=ft.Icons.PEOPLE, label="Clientes"),
@@ -352,9 +362,13 @@ class DeliveryApp:
             else:
                 self.dashboard_refresh_controller.stop()
 
-            # O shell do usuário seleciona ações pelo índice do menu lateral.
-            actions = [self.dashboard_view, self.delivery_management_view, self.routes_view]
-            if not driver:
+            # Ações diferenciadas por perfil
+            if driver:
+                # MOTORISTA: Dashboard, Minhas Rotas, Perfil
+                actions = [self.dashboard_view, self.minhas_rotas_view, self.profile_view]
+            else:
+                # ADMIN/GESTOR
+                actions = [self.dashboard_view, self.delivery_management_view, self.routes_view]
                 actions += [
                     self.orders_view,
                     self.clients_view,
@@ -367,6 +381,7 @@ class DeliveryApp:
                     self.reports_view,
                     self.users_view,
                 ]
+            
             if selected_index < len(actions):
                 actions[selected_index]()
             else:
@@ -1373,11 +1388,248 @@ class DeliveryApp:
         except ApiError as exc:
             self.notify(str(exc), True)
 
+    def minhas_rotas_view(self):
+        """
+        View exclusiva para MOTORISTA.
+        Mostra rota atual (PRONTA, EM_EXECUCAO, PAUSADA) e histórico (FINALIZADA, CANCELADA).
+        """
+        try:
+            routes = self.api.request("GET", "/rotas?limit=100&offset=0")
+        except ApiError as exc:
+            self.notify(str(exc), True)
+            return
+
+        # Separar rotas por categoria
+        current_route_statuses = {"PRONTA", "EM_EXECUCAO", "PAUSADA"}
+        current_routes = [r for r in routes if r["status"] in current_route_statuses]
+        history_statuses = {"FINALIZADA", "CANCELADA"}
+        history_routes = [r for r in routes if r["status"] in history_statuses]
+
+        content_items = []
+
+        # =====================================================================
+        # SEÇÃO 1: ROTA ATUAL
+        # =====================================================================
+        if current_routes:
+            # Usar primeira rota atual (motorista deve ter apenas uma)
+            current_route = current_routes[0]
+            
+            def handle_open_route(_):
+                self.driver_route_view(current_route.get("id"))
+
+            def handle_change_status(new_status):
+                def _handler(_):
+                    self.change_route_status(current_route, new_status, stay_in_view=True)
+                return _handler
+
+            # Determinar botão principal conforme status
+            primary_button = None
+            if current_route["status"] in {"PRONTA", "PLANEJADA", "AGUARDANDO_MOTORISTA"}:
+                primary_button = ft.FilledButton(
+                    "Abrir rota",
+                    icon=ft.Icons.PLAY_ARROW,
+                    on_click=handle_open_route,
+                )
+            elif current_route["status"] in {"EM_EXECUCAO", "PAUSADA"}:
+                primary_button = ft.FilledButton(
+                    "Continuar rota",
+                    icon=ft.Icons.PLAY_ARROW,
+                    on_click=handle_open_route,
+                )
+
+            # Card de rota atual
+            entregas_list = current_route.get("entregas", [])
+            num_entregas = len(entregas_list)
+            concluidas = sum(1 for e in entregas_list if e.get("status") == "ENTREGUE")
+            progresso = int(current_route.get("progresso_percentual") or 0)
+            distancia = current_route.get("distancia_km", "--")
+            duracao = current_route.get("duracao_minutos", "--")
+
+            if duracao != "--":
+                hours = int(duracao) // 60
+                minutes = int(duracao) % 60
+                duracao_fmt = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+            else:
+                duracao_fmt = "--"
+
+            current_section = ft.Container(
+                content=ft.Column([
+                    ft.Text("ROTA ATUAL", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.INDIGO),
+                    ft.Divider(),
+                    ft.Row([
+                        ft.Column([
+                            ft.Text("Nome", size=12, color=ft.Colors.GREY_700),
+                            ft.Text(current_route.get("nome", "--"), size=14, weight=ft.FontWeight.BOLD),
+                        ], spacing=2),
+                        ft.Column([
+                            ft.Text("Status", size=12, color=ft.Colors.GREY_700),
+                            ft.Text(current_route.get("status", "--").replace("_", " ").title(), size=14, weight=ft.FontWeight.BOLD),
+                        ], spacing=2),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, expand=True, spacing=20),
+                    ft.Row([
+                        ft.Column([
+                            ft.Text("Veículo", size=12, color=ft.Colors.GREY_700),
+                            ft.Text(str(current_route.get("veiculo_id") or "--"), size=14),
+                        ], spacing=2),
+                        ft.Column([
+                            ft.Text("Entregas", size=12, color=ft.Colors.GREY_700),
+                            ft.Text(f"{concluidas}/{num_entregas}", size=14),
+                        ], spacing=2),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, expand=True, spacing=20),
+                    ft.Row([
+                        ft.Column([
+                            ft.Text("Progresso", size=12, color=ft.Colors.GREY_700),
+                            ft.Text(f"{progresso}%", size=14),
+                        ], spacing=2),
+                        ft.Column([
+                            ft.Text("Distância", size=12, color=ft.Colors.GREY_700),
+                            ft.Text(f"{distancia} km" if distancia != "--" else "--", size=14),
+                        ], spacing=2),
+                        ft.Column([
+                            ft.Text("Duração", size=12, color=ft.Colors.GREY_700),
+                            ft.Text(duracao_fmt, size=14),
+                        ], spacing=2),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, expand=True, spacing=20),
+                    ft.ProgressBar(value=min(max(progresso / 100, 0), 1), bar_height=8),
+                    ft.Row([
+                        primary_button,
+                        ft.IconButton(
+                            ft.Icons.PAUSE,
+                            tooltip="Pausar" if current_route["status"] == "EM_EXECUCAO" else "Retomar",
+                            visible=current_route["status"] in {"EM_EXECUCAO", "PAUSADA"},
+                            on_click=handle_change_status("PAUSADA" if current_route["status"] == "EM_EXECUCAO" else "EM_EXECUCAO"),
+                        ),
+                    ], spacing=12),
+                ], spacing=12),
+                padding=20,
+                border_radius=16,
+                bgcolor=ft.Colors.WHITE,
+                border=ft.border.all(2, ft.Colors.INDIGO_200),
+                shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+            )
+            content_items.append(current_section)
+        else:
+            # Sem rota atual
+            no_route_section = ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.Icons.TRIP_ORIGIN, size=48, color=ft.Colors.GREY_400),
+                    ft.Text("Sem rota ativa no momento", size=16, weight=ft.FontWeight.BOLD),
+                    ft.Text("Sua próxima rota será atribuída em breve.", color=ft.Colors.GREY_700),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12),
+                padding=40,
+                border_radius=16,
+                bgcolor=ft.Colors.GREY_100,
+            )
+            content_items.append(no_route_section)
+
+        # =====================================================================
+        # SEÇÃO 2: HISTÓRICO
+        # =====================================================================
+        if history_routes:
+            content_items.append(ft.Text("HISTÓRICO", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.INDIGO))
+            content_items.append(ft.Divider())
+
+            for route in history_routes:
+                entregas = route.get("entregas", [])
+                num_entregas = len(entregas)
+                progresso = int(route.get("progresso_percentual") or 0)
+                distancia = route.get("distancia_km", "--")
+
+                def handle_view_details(route_obj):
+                    def _handler(_):
+                        self.route_details_dialog(route_obj)
+                    return _handler
+
+                history_item = ft.ListTile(
+                    leading=ft.Icon(
+                        ft.Icons.DONE if route["status"] == "FINALIZADA" else ft.Icons.CANCEL,
+                        color=ft.Colors.GREEN if route["status"] == "FINALIZADA" else ft.Colors.RED,
+                    ),
+                    title=ft.Text(f"{route.get('nome', '--')} · {route.get('status', '--').replace('_', ' ').title()}"),
+                    subtitle=ft.Text(
+                        f"Entregas: {num_entregas} | Progresso: {progresso}% | "
+                        f"Distância: {distancia if distancia != '--' else '-'} km"
+                    ),
+                    trailing=ft.IconButton(
+                        ft.Icons.INFO,
+                        tooltip="Ver detalhes",
+                        on_click=handle_view_details(route),
+                    ),
+                )
+                content_items.append(history_item)
+
+        self.content.controls = [
+            self.header_bar("Minhas Rotas", "Sua operação de entregas"),
+        ] + content_items
+
+        self.page.update()
+
     def route_status_options(self):
         return [
             "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO",
             "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
         ]
+
+    def profile_view(self):
+        """
+        View exclusiva para MOTORISTA.
+        Mostra dados pessoais do usuário logado.
+        """
+        user = self.user or {}
+        
+        profile_fields = [
+            ("Nome", user.get("nome", "--")),
+            ("Email", user.get("email", "--")),
+            ("Telefone", user.get("telefone") or "--"),
+            ("Perfil", user.get("perfil", "--")),
+            ("Organização ID", str(user.get("organizacao_id")) if user.get("organizacao_id") else "--"),
+            ("Ativo", "Sim" if user.get("ativo") else "Não"),
+        ]
+
+        profile_items = []
+        for label, value in profile_fields:
+            profile_items.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text(label, size=12, color=ft.Colors.GREY_700, weight=ft.FontWeight.BOLD),
+                        ft.Text(value, size=14, selectable=True),
+                    ], spacing=4),
+                    padding=16,
+                    border_radius=12,
+                    bgcolor=ft.Colors.GREY_100,
+                )
+            )
+
+        self.content.controls = [
+            self.header_bar("Perfil", "Informações pessoais"),
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Container(
+                            content=ft.Column([
+                                ft.Icon(ft.Icons.PERSON, size=48, color=ft.Colors.INDIGO),
+                                ft.Text(user.get("nome", "Motorista"), size=24, weight=ft.FontWeight.BOLD),
+                            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
+                            padding=20,
+                            border_radius=16,
+                            bgcolor=ft.Colors.INDIGO_50,
+                        ),
+                        ft.Text("Dados Pessoais", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.INDIGO),
+                        ft.Column(profile_items, spacing=12),
+                        ft.Divider(),
+                        ft.FilledButton(
+                            "Sair",
+                            icon=ft.Icons.LOGOUT,
+                            on_click=lambda _: self.logout(),
+                            bgcolor=ft.Colors.RED_700,
+                        ),
+                    ],
+                    spacing=16,
+                ),
+                padding=20,
+            ),
+        ]
+        self.page.update()
 
     def _sorted_route_entries(self, route):
         entries = list(route.get("entregas") or [])
