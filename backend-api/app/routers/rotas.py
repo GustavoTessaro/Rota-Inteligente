@@ -1,6 +1,6 @@
 import hashlib
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -16,6 +16,7 @@ from ..deps import (
     ensure_route_payload_scope,
     ensure_delivery_can_be_routed,
     get_or_404,
+    route_has_pending_deliveries,
     staff,
     TERMINAL_DELIVERY_STATUSES,
     validate_driver,
@@ -27,6 +28,7 @@ from ..models import (
     ComprovanteEntrega,
     Endereco,
     Entrega,
+    HistoricoEntrega,
     HistoricoEntrega,
     Organizacao,
     Pedido,
@@ -41,6 +43,7 @@ from ..models import (
     TipoEventoRota,
     Usuario,
     Veiculo,
+    now as current_time,
 )
 from ..schemas import (
     RotaCreate,
@@ -50,6 +53,7 @@ from ..schemas import (
     RotaOut,
     RotaPosicaoCreate,
     RotaPosicaoOut,
+    ResumoDiarioMotorista,
     RotaStatusIn,
     StatusRota,
 )
@@ -291,12 +295,9 @@ def generate_route_from_orders(data: RotaGerarIn, db: Session = Depends(get_db),
         ).all()
         if pedido.status in {StatusPedido.FINALIZADO, StatusPedido.CANCELADO}:
             raise HTTPException(422, f"Pedido {pedido.id} não pode entrar em nova rota no estado {pedido.status.value}")
-        if any(item.status == StatusEntrega.ENTREGUE for item in existing_deliveries):
-            raise HTTPException(422, f"Pedido {pedido.id} já possui entrega concluída")
-        eligible_deliveries = [
-            item for item in existing_deliveries
-            if item.status not in {StatusEntrega.ENTREGUE, StatusEntrega.CANCELADA}
-        ]
+        for existing_delivery in existing_deliveries:
+            ensure_delivery_can_be_routed(db, pedido, existing_delivery)
+        eligible_deliveries = list(existing_deliveries)
         if len(eligible_deliveries) > 1:
             raise HTTPException(422, f"Pedido {pedido.id} possui múltiplas entregas operacionais")
         existing = eligible_deliveries[0] if eligible_deliveries else None
@@ -324,7 +325,7 @@ def generate_route_from_orders(data: RotaGerarIn, db: Session = Depends(get_db),
         veiculo_id=data.veiculo_id,
         motorista_id=data.motorista_id,
         status=data.status,
-        data_planejada=data.data_planejada or datetime.utcnow(),
+        data_planejada=data.data_planejada or current_time(),
         origem_endereco_id=principal_address.id,
         destino_endereco_id=orders[-1].endereco_entrega_id,
         observacoes=data.observacoes,
@@ -362,6 +363,18 @@ def _driver_route_priority(status: StatusRota) -> int:
         StatusRota.AGUARDANDO_VEICULO: 1,
     }
     return priorities.get(status, 0)
+
+
+def _route_status_event(previous_status: StatusRota | None, new_status: StatusRota):
+    if new_status == StatusRota.EM_EXECUCAO:
+        return TipoEventoRota.RETOMADA if previous_status == StatusRota.PAUSADA else TipoEventoRota.PARTIDA
+    if new_status == StatusRota.PAUSADA:
+        return TipoEventoRota.PAUSA
+    if new_status == StatusRota.FINALIZADA:
+        return TipoEventoRota.FINALIZADA
+    if new_status == StatusRota.CANCELADA:
+        return TipoEventoRota.CANCELAMENTO
+    return None
 
 
 def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
@@ -584,6 +597,105 @@ def get_current_driver_route(
         raise
 
 
+@router.get("/motorista/resumo-diario", response_model=ResumoDiarioMotorista)
+def get_driver_daily_summary(db: Session = Depends(get_db), user: Usuario = Depends(current_user)):
+    if user.perfil != Perfil.MOTORISTA:
+        raise HTTPException(403, "Endpoint exclusivo para motoristas")
+
+    now = datetime.now()
+    day_start = datetime(now.year, now.month, now.day)
+    next_day = day_start + timedelta(days=1)
+    active_statuses = [StatusRota.PRONTA, StatusRota.EM_EXECUCAO, StatusRota.PAUSADA]
+    completed_statuses = [StatusRota.FINALIZADA, StatusRota.CONCLUIDA]
+
+    routes = db.scalars(select(Rota).where(Rota.motorista_id == user.id)).all()
+    current_route = next(
+        (
+            route for route in sorted(
+                routes,
+                key=lambda item: {
+                    StatusRota.EM_EXECUCAO: 0,
+                    StatusRota.PAUSADA: 1,
+                    StatusRota.PRONTA: 2,
+                }.get(item.status, 99),
+            )
+            if route.status in active_statuses
+        ),
+        None,
+    )
+
+    completed_routes_today = [
+        route for route in routes
+        if route.status in completed_statuses
+        and route.data_conclusao is not None
+        and day_start <= route.data_conclusao < next_day
+    ]
+
+    deliveries = db.scalars(
+        select(Entrega).where(
+            Entrega.entregador_id == user.id,
+            Entrega.data_entrega.is_not(None),
+            Entrega.data_entrega >= day_start,
+            Entrega.data_entrega < next_day,
+        )
+    ).all()
+    delivered_today = sum(1 for delivery in deliveries if delivery.status == StatusEntrega.ENTREGUE)
+    not_delivered_history = db.scalars(
+        select(HistoricoEntrega)
+        .join(Entrega, Entrega.id == HistoricoEntrega.entrega_id)
+        .where(
+            Entrega.entregador_id == user.id,
+            HistoricoEntrega.status_novo == StatusEntrega.NAO_ENTREGUE.value,
+            HistoricoEntrega.criado_em >= day_start,
+            HistoricoEntrega.criado_em < next_day,
+        )
+    ).all()
+    not_delivered_today = len({history.entrega_id for history in not_delivered_history})
+
+    pending_delivery_ids = db.scalars(
+        select(RotaEntrega.entrega_id)
+        .join(Rota, Rota.id == RotaEntrega.rota_id)
+        .join(Entrega, Entrega.id == RotaEntrega.entrega_id)
+        .where(
+            Rota.motorista_id == user.id,
+            Rota.status.in_(active_statuses),
+            Entrega.status.not_in([StatusEntrega.ENTREGUE, StatusEntrega.NAO_ENTREGUE, StatusEntrega.CANCELADA]),
+        )
+    ).all()
+    pending_count = len(set(pending_delivery_ids))
+
+    distance_today = sum(
+        float(route.distancia_real if route.distancia_real and route.distancia_real > 0 else route.distancia_prevista or 0)
+        for route in completed_routes_today
+    )
+    duration_minutes = 0
+    for route in completed_routes_today:
+        if route.duracao_real and route.duracao_real > 0:
+            duration_minutes += round(float(route.duracao_real) * 60)
+        elif route.data_inicio and route.data_conclusao and route.data_conclusao >= route.data_inicio:
+            duration_minutes += round((route.data_conclusao - route.data_inicio).total_seconds() / 60)
+        elif route.duracao_prevista and route.duracao_prevista > 0:
+            duration_minutes += round(float(route.duracao_prevista) * 60)
+
+    vehicle = current_route.veiculo if current_route and current_route.veiculo else None
+    if vehicle is None:
+        vehicle = db.scalar(
+            select(Veiculo)
+            .where(Veiculo.motorista_id == user.id, Veiculo.ativo.is_(True))
+            .order_by(Veiculo.id)
+        )
+
+    return {
+        "data": now.date(),
+        "entregas_concluidas_hoje": delivered_today,
+        "entregas_nao_entregues_hoje": not_delivered_today,
+        "entregas_pendentes": pending_count,
+        "rotas_concluidas_hoje": len(completed_routes_today),
+        "distancia_hoje_km": distance_today,
+        "tempo_em_rota_hoje_minutos": duration_minutes,
+        "veiculo_atual": vehicle,
+        "rota_atual": current_route,
+    }
 @router.patch("/{rota_id}/confirmar-carga", response_model=RotaOut)
 def confirm_route_loading(
     rota_id: int,
@@ -694,6 +806,9 @@ def update_route_status(
         if not rota.carga_confirmada:
             raise HTTPException(422, "Carga não confirmada. Confirme a carga antes de iniciar a viagem. campo carga_confirmada obrigatório")
 
+        if not route_has_pending_deliveries(db, rota):
+            raise HTTPException(422, "Rota não possui entregas pendentes para execução")
+
         if rota.veiculo_id is None:
             if user.perfil != Perfil.MOTORISTA or rota.motorista_id != user.id:
                 raise HTTPException(422, "Rota precisa de um veículo associado para iniciar")
@@ -724,7 +839,7 @@ def update_route_status(
         rota.combustivel_final = data.combustivel_final
     rota.status = data.status
     if data.status == StatusRota.EM_EXECUCAO and previous_status != StatusRota.EM_EXECUCAO:
-        rota.data_inicio = rota.data_inicio or datetime.utcnow()
+        rota.data_inicio = rota.data_inicio or current_time()
         for entry in rota.entregas:
             delivery = db.get(Entrega, entry.entrega_id)
             if delivery is None:
@@ -739,23 +854,16 @@ def update_route_status(
                     alterado_por=user.id,
                 ))
     if data.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA} and rota.data_conclusao is None:
-        rota.data_conclusao = datetime.utcnow()
+        rota.data_conclusao = current_time()
 
-    event = data.evento
-    if event is None:
-        if previous_status == StatusRota.EM_EXECUCAO and data.status == StatusRota.PAUSADA:
-            event = TipoEventoRota.PAUSA
-        elif previous_status == StatusRota.PAUSADA and data.status == StatusRota.EM_EXECUCAO:
-            event = TipoEventoRota.RETOMADA
-        elif data.status == StatusRota.FINALIZADA:
-            event = TipoEventoRota.FINALIZADA
-        elif data.status == StatusRota.EM_EXECUCAO and previous_status != StatusRota.EM_EXECUCAO:
-            event = TipoEventoRota.PARTIDA
+    event = data.evento or _route_status_event(previous_status, data.status)
 
     should_log = previous_status != rota.status or data.evento is not None or data.observacao is not None or data.entrega_id is not None
     if should_log:
+        if event is None:
+            raise HTTPException(422, "Informe um evento semântico para esta transição de rota")
         rota.historico.append(RotaHistorico(
-            evento=event or TipoEventoRota.PARTIDA,
+            evento=event,
             status_anterior=previous_status.value if previous_status else None,
             status_novo=data.status.value,
             observacao=data.observacao,

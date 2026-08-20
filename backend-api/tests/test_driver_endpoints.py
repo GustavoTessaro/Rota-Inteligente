@@ -115,7 +115,7 @@ def test_get_motorista_rota_atual_returns_active_route(client: TestClient, admin
     org = orgs[0]
 
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = next(item for item in deliveries if item["status"] != "CANCELADA")
+    selected = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     route_response = client.post(
         "/api/rotas/gerar",
@@ -173,7 +173,7 @@ def test_get_sequencia_carregamento_returns_inverted_order(client: TestClient, a
     org = orgs[0]
 
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = [item for item in deliveries if item["status"] != "CANCELADA"][:3]
+    selected = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:3]
     assert len(selected) >= 3, "Necessário pelo menos 3 entregas válidas para testar a ordem invertida"
 
     route_response = client.post(
@@ -208,7 +208,7 @@ def test_get_sequencia_carregamento_rejects_other_driver(client: TestClient, adm
     orgs = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()
     org = orgs[0]
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = next(item for item in deliveries if item["status"] != "CANCELADA")
+    selected = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     route_response = client.post(
         "/api/rotas/gerar",
@@ -248,7 +248,7 @@ def test_driver_can_start_own_route(client: TestClient, admin_headers: dict) -> 
     orgs = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()
     org = orgs[0]
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = next(item for item in deliveries if item["status"] != "CANCELADA")
+    selected = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     route_response = client.post(
         "/api/rotas/gerar",
@@ -288,7 +288,7 @@ def test_route_start_requires_loading_confirmation(client: TestClient, admin_hea
     orgs = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()
     org = orgs[0]
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
+    selected = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:2]
     assert len(selected) >= 2
 
     route_response = client.post(
@@ -324,7 +324,7 @@ def test_route_start_confirms_and_marks_pending_deliveries_as_em_rota(client: Te
     orgs = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()
     org = orgs[0]
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
+    selected = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:2]
     assert len(selected) >= 2
 
     route_response = client.post(
@@ -366,7 +366,7 @@ def test_get_motorista_rota_atual_prefers_em_execucao_over_other_statuses(client
     orgs = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()
     org = orgs[0]
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    chosen = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
+    chosen = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:2]
     assert len(chosen) >= 2
 
     first = client.post(
@@ -409,7 +409,7 @@ def test_route_progress_and_finalization_after_last_delivery(client: TestClient,
     orgs = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()
     org = orgs[0]
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
+    selected = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:2]
     assert len(selected) >= 2
 
     route_response = client.post(
@@ -499,7 +499,7 @@ def test_driver_route_next_delivery_skips_not_delivered_and_is_stable_after_relo
     driver_headers = _login(client, driver["email"])
     org = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()[0]
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
+    selected = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:2]
     assert len(selected) >= 2
 
     route_response = client.post(
@@ -559,7 +559,7 @@ def test_driver_route_next_delivery_follows_optimized_sequence_through_completio
     driver_headers = _login(client, driver["email"])
     org = client.get("/api/organizacoes?limit=50&offset=0", headers=admin_headers).json()[0]
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    selected = [item for item in deliveries if item["status"] != "CANCELADA"][:3]
+    selected = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:3]
     assert len(selected) == 3
 
     route_response = client.post(

@@ -269,6 +269,17 @@ def test_driver_dashboard_handles_404_no_route():
         if method == "GET" and path == "/rotas/motorista/atual":
             # Simular resposta 404 do backend
             raise ApiError("404 Not Found: Nenhuma rota ativa para este motorista")
+        if method == "GET" and path == "/rotas/motorista/resumo-diario":
+            return {
+                "entregas_concluidas_hoje": 0,
+                "entregas_nao_entregues_hoje": 0,
+                "entregas_pendentes": 0,
+                "rotas_concluidas_hoje": 0,
+                "distancia_hoje_km": 0,
+                "tempo_em_rota_hoje_minutos": 0,
+                "veiculo_atual": None,
+                "rota_atual": None,
+            }
         raise Exception(f"Unexpected call: {method} {path}")
     
     mock_api.request = request_404

@@ -46,6 +46,32 @@ class MotoristaResumo(ORMModel):
     perfil: Perfil
 
 
+class ResumoDiarioVeiculo(ORMModel):
+    id: int
+    placa: str
+    marca: str
+    modelo: str
+
+
+class ResumoDiarioRota(ORMModel):
+    id: int
+    nome: str
+    status: StatusRota
+    progresso_percentual: int
+
+
+class ResumoDiarioMotorista(BaseModel):
+    data: date
+    entregas_concluidas_hoje: int
+    entregas_nao_entregues_hoje: int
+    entregas_pendentes: int
+    rotas_concluidas_hoje: int
+    distancia_hoje_km: float
+    tempo_em_rota_hoje_minutos: int
+    veiculo_atual: ResumoDiarioVeiculo | None = None
+    rota_atual: ResumoDiarioRota | None = None
+
+
 class UsuarioOut(ORMModel):
     id: int
     nome: str

@@ -144,6 +144,7 @@ class TipoEventoRota(str, enum.Enum):
     ENTREGA_REALIZADA = "ENTREGA_REALIZADA"
     ENTREGA_FALHOU = "ENTREGA_FALHOU"
     FINALIZADA = "FINALIZADA"
+    CANCELAMENTO = "CANCELAMENTO"
 
 
 class Rota(TimestampMixin, Base):

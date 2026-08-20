@@ -25,6 +25,7 @@ from .models import (
     Usuario,
     Veiculo,
     Endereco,
+    now as current_time,
 )
 from .security import require_roles
 from .services.google_maps_service import get_geocoding_service
@@ -56,6 +57,8 @@ PENDING_DELIVERY_STATUSES = {
     StatusEntrega.COLETADA,
     StatusEntrega.EM_ROTA,
 }
+
+PLANNABLE_DELIVERY_STATUSES = {StatusEntrega.AGUARDANDO_COLETA}
 
 
 def get_or_404(db: Session, model, item_id: int):
@@ -192,8 +195,8 @@ def validate_route_delivery_entries(db: Session, route_data):
 def ensure_delivery_can_be_routed(db: Session, pedido: Pedido, delivery: Entrega):
     if pedido.status in {StatusPedido.FINALIZADO, StatusPedido.CANCELADO}:
         raise HTTPException(422, f"Pedido {pedido.id} não pode entrar em nova rota no estado {pedido.status.value}")
-    if delivery.status in {StatusEntrega.ENTREGUE, StatusEntrega.CANCELADA}:
-        raise HTTPException(422, f"Pedido {pedido.id} possui entrega terminal e não pode entrar em rota normal")
+    if delivery.status not in PLANNABLE_DELIVERY_STATUSES:
+        raise HTTPException(422, f"Entrega {delivery.id} no estado {delivery.status.value} não pode entrar em nova rota")
     active_route = db.scalar(
         select(Rota)
         .join(RotaEntrega, RotaEntrega.rota_id == Rota.id)
@@ -242,7 +245,7 @@ def finalize_route_if_complete(db: Session, rota: Rota):
     rota.status = StatusRota.FINALIZADA
     rota.progresso_percentual = 100
     if rota.data_conclusao is None:
-        rota.data_conclusao = datetime.now()
+        rota.data_conclusao = current_time()
     rota.historico.append(RotaHistorico(
         evento=TipoEventoRota.FINALIZADA,
         status_anterior=previous_status.value if previous_status else None,
@@ -260,9 +263,9 @@ def apply_delivery_status(db: Session, delivery: Entrega, new_status: StatusEntr
     previous = delivery.status
     delivery.status = new_status
     if new_status == StatusEntrega.COLETADA and not delivery.data_coleta:
-        delivery.data_coleta = datetime.now()
+        delivery.data_coleta = current_time()
     if new_status == StatusEntrega.ENTREGUE:
-        delivery.data_entrega = datetime.now()
+        delivery.data_entrega = current_time()
         order = delivery.pedido
         relevant = db.scalars(select(Entrega).where(Entrega.pedido_id == order.id)).all()
         if relevant and all(item.status in TERMINAL_DELIVERY_STATUSES for item in relevant):

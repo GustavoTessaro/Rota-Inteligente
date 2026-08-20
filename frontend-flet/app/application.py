@@ -34,6 +34,9 @@ TERMINAL_DELIVERY_STATUSES = {"ENTREGUE", "NAO_ENTREGUE", "CANCELADA"}
 
 
 class DeliveryApp:
+    @staticmethod
+    def _generated_route_name():
+        return f"Rota gerada {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     def __init__(self, page: ft.Page):
         self.page = page
         self.api = ApiClient()
@@ -605,22 +608,14 @@ class DeliveryApp:
         Suporta estado vazio quando motorista não tem rota atribuída (404).
         """
         try:
-            # Buscar rota ativa do motorista (Phase 1 endpoint)
+            daily_summary = self.api.request("GET", "/rotas/motorista/resumo-diario")
             current_route = None
-            try:
+            if daily_summary.get("rota_atual"):
                 current_route = self.api.request("GET", "/rotas/motorista/atual")
-            except ApiError as exc:
-                error_str = str(exc).lower()
-                # 404 é esperado e normal quando motorista não tem rota ativa
-                if "404" not in error_str and "nenhuma rota" not in error_str:
-                    # Só relança se for outro tipo de erro (não 404)
-                    raise
-                # Se for 404, continua normalmente com current_route = None
 
-            # Montar componentes (funcionam com current_route=None)
             greeting_card = self._build_driver_greeting()
-            vehicle_card = self._build_driver_vehicle_card(current_route)
-            indicator_cards = self._build_driver_indicators(current_route)
+            vehicle_card = self._build_driver_vehicle_card(current_route, daily_summary)
+            indicator_cards = self._build_driver_indicators(current_route, daily_summary)
             mission_card = self._build_driver_mission_card(current_route)
 
             # Atualizar view
@@ -701,16 +696,18 @@ class DeliveryApp:
             bgcolor=ft.Colors.INDIGO_50,
         )
 
-    def _build_driver_vehicle_card(self, current_route) -> ft.Container:
+    def _build_driver_vehicle_card(self, current_route, daily_summary=None) -> ft.Container:
         """
         Card com informações do veículo vinculado à rota ativa.
         Se não há rota ativa, mostra placeholder.
         """
         vehicle_info = "--"
-        if current_route and current_route.get("veiculo"):
-            veiculo = current_route["veiculo"]
-            placa = veiculo.get("placa", "--")
-            modelo = veiculo.get("modelo", "--")
+        vehicle = current_route.get("veiculo") if current_route else None
+        if not vehicle and daily_summary:
+            vehicle = daily_summary.get("veiculo_atual")
+        if vehicle:
+            placa = vehicle.get("placa", "--")
+            modelo = vehicle.get("modelo", "--")
             vehicle_info = f"{modelo} ({placa})"
 
         return ft.Container(
@@ -728,7 +725,21 @@ class DeliveryApp:
             border=ft.border.all(1, ft.Colors.GREY_300),
         )
 
-    def _build_driver_indicators(self, current_route) -> list:
+    @staticmethod
+    def _format_dashboard_distance(value):
+        if value is None or float(value) == 0:
+            return "0 km"
+        return f"{float(value):.1f}".replace(".", ",") + " km"
+
+    @staticmethod
+    def _format_dashboard_duration(value):
+        total_minutes = int(value or 0)
+        hours, minutes = divmod(total_minutes, 60)
+        if hours:
+            return f"{hours}h {minutes}min"
+        return f"{minutes} min"
+
+    def _build_driver_indicators(self, current_route, daily_summary=None) -> list:
         """
         Retorna lista com 4 cards de indicadores:
         1. Entregas concluídas hoje
@@ -745,8 +756,12 @@ class DeliveryApp:
             {"label": "Tempo", "value": "--", "icon": ft.Icons.SCHEDULE, "color": ft.Colors.PURPLE},
         ]
 
-        # Extrair valores da rota se disponível
-        if current_route:
+        if daily_summary is not None:
+            indicators[0]["value"] = str(daily_summary.get("entregas_concluidas_hoje", 0))
+            indicators[1]["value"] = str(daily_summary.get("entregas_pendentes", 0))
+            indicators[2]["value"] = self._format_dashboard_distance(daily_summary.get("distancia_hoje_km", 0))
+            indicators[3]["value"] = self._format_dashboard_duration(daily_summary.get("tempo_em_rota_hoje_minutos", 0))
+        elif current_route:
             # Distância e duração da rota atual
             distance = current_route.get("distancia_km")
             duration = current_route.get("duracao_minutos")
@@ -817,6 +832,7 @@ class DeliveryApp:
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12)
         else:
             # Rota ativa disponível
+            mission_label = "Iniciar Rota" if current_route.get("status") == "PRONTA" else "Continuar Rota"
             route_id = current_route.get("id", "--")
             route_name = current_route.get("nome", "--")
             status = current_route.get("status", "--").replace("_", " ")
@@ -895,7 +911,7 @@ class DeliveryApp:
                 ft.Divider(height=10),
                 ft.Row([
                     ft.FilledButton(
-                        "Iniciar Rota",
+                        mission_label,
                         icon=ft.Icons.PLAY_ARROW,
                         on_click=handle_start_route,
                         expand=True,
@@ -2550,7 +2566,7 @@ class DeliveryApp:
                 return
 
             payload = {
-                "nome": f"Rota gerada {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}",
+                "nome": self._generated_route_name(),
                 "descricao": "Rota gerada a partir da Gestão de Entregas",
                 "organizacao_id": int(org_id),
                 "pedido_ids": pedido_ids,
