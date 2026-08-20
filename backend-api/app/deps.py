@@ -131,6 +131,14 @@ def ensure_manageable_user_payload(current: Usuario, data):
     data.organizacao_id = current.organizacao_id
 
 
+def report_organization_scope(user: Usuario) -> int | None:
+    if user.perfil == Perfil.ADMIN:
+        return None
+    if user.perfil == Perfil.GESTOR and user.organizacao_id is not None:
+        return user.organizacao_id
+    raise HTTPException(403, "Perfil sem permissão para esta operação")
+
+
 def ensure_user_management_scope(current: Usuario, target: Usuario):
     if current.perfil == Perfil.ADMIN:
         return
