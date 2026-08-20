@@ -27,6 +27,25 @@ class LoginIn(BaseModel):
     senha: str
 
 
+class OrganizacaoResumo(ORMModel):
+    id: int
+    nome: str
+
+
+class VeiculoResumo(ORMModel):
+    id: int
+    placa: str
+    modelo: str
+    marca: str
+
+
+class MotoristaResumo(ORMModel):
+    id: int
+    nome: str
+    email: EmailStr
+    perfil: Perfil
+
+
 class UsuarioOut(ORMModel):
     id: int
     nome: str
@@ -35,6 +54,7 @@ class UsuarioOut(ORMModel):
     perfil: Perfil
     ativo: bool
     organizacao_id: int | None
+    organizacao: OrganizacaoResumo | None = None
 
 
 class TokenOut(BaseModel):
@@ -346,8 +366,11 @@ class RotaOut(ORMModel):
     nome: str
     descricao: str | None
     organizacao_id: int
+    organizacao: OrganizacaoResumo | None = None
     veiculo_id: int | None
+    veiculo: VeiculoResumo | None = None
     motorista_id: int | None
+    motorista: MotoristaResumo | None = None
     status: StatusRota
     data_planejada: datetime | None
     data_inicio: datetime | None

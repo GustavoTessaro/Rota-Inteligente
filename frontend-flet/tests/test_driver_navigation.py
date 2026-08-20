@@ -233,10 +233,13 @@ def test_mission_card_no_route():
         f"Esperado ft.Container, got {type(mission_card)}"
     
     # Verificar que contém mensagem de "Nenhuma rota ativa"
-    content_str = str(mission_card.content)
-    assert "nenhuma" in content_str.lower() or "ativa" in content_str.lower() or \
-           "Nenhuma rota ativa" in str(mission_card.content.controls), \
-        "Card de missão não contém mensagem de 'Nenhuma rota ativa'"
+    text_values = [
+        control.value
+        for control in mission_card.content.controls
+        if isinstance(control, ft.Text)
+    ]
+    assert "Nenhuma rota atribuída no momento" in text_values, \
+        "Card de missão não contém mensagem de ausência de rota"
     
     print("✓ Card de missão mostra placeholder quando não há rota")
 

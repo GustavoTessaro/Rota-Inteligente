@@ -800,16 +800,12 @@ class DeliveryApp:
         - Atualização de status
         """
         def handle_start_route(_):
-            print("DEBUG handle_start_route current_route=", current_route)
             if not current_route:
-                print("DEBUG handle_start_route sem rota ativa")
                 self.notify("Nenhuma rota ativa para iniciar.", True)
                 return
             try:
-                print("DEBUG handle_start_route abrindo driver_route_view route_id=", current_route.get("id"))
                 self.driver_route_view(current_route.get("id"))
             except Exception as exc:
-                print("DEBUG handle_start_route erro=", exc)
                 self.notify("Não foi possível abrir a rota ativa.", True)
 
         if not current_route:
@@ -924,37 +920,29 @@ class DeliveryApp:
         Tela da rota ativa para o motorista.
         Exibe a rota, o mapa, próxima parada real e sequência de entregas com dados reais de cliente e endereço.
         """
-        print("DEBUG driver_route_view INICIO route_id=", route_id, "loading_confirmed=", loading_confirmed)
         try:
             # Motorista deve sempre seguir o payload enriquecido da rota ativa do próprio motorista.
             # O endpoint /rotas/{id} não traz os dados completos da rota do motorista em forma de payload
             # compatível com a tela de Rota Ativa (route_geometry + entregas detalhadas + cliente/endereço).
             if self.user.get("perfil") == "MOTORISTA":
-                print("DEBUG driver_route_view buscando /rotas/motorista/atual")
                 route = self.api.request("GET", "/rotas/motorista/atual")
                 route_id = route.get("id")
             elif route_id is None:
-                print("DEBUG driver_route_view buscando /rotas/motorista/atual")
                 route = self.api.request("GET", "/rotas/motorista/atual")
                 route_id = route.get("id")
             else:
-                print("DEBUG driver_route_view buscando /rotas/{route_id}", route_id)
                 route = self.api.request("GET", f"/rotas/{route_id}")
 
             if not route:
-                print("DEBUG driver_route_view rota vazia")
                 self.notify("Nenhuma rota ativa encontrada.", True)
                 return
 
             loading_confirmed = bool(route.get("carga_confirmada", False))
 
-            print("DEBUG driver_route_view route_status=", route.get("status"), "route_keys=", sorted(route.keys())[:20])
-
             # Obter dados reais de cliente e endereço para cada parada
             stops = self._driver_route_snapshot(route)
             next_stop = self._next_driver_stop(route)
             route_status = route.get("status", "PRONTA")
-            print("DEBUG driver_route_view stops=", len(stops), "next_stop=", bool(next_stop), "next_name=", next_stop.get("cliente", {}).get("nome") if next_stop else None)
 
             cliente_nome = None
             endereco = None
@@ -980,11 +968,6 @@ class DeliveryApp:
                     if stop.get("delivery", {}).get("status") not in TERMINAL_DELIVERY_STATUSES:
                         endereco = stop.get("address") or stop.get("destino") or {}
                         break
-
-            print("NEXT_STOP_RAW =", next_stop)
-            print("CLIENTE_NOME =", cliente_nome)
-            print("ADDRESS_RAW =", endereco)
-            print("OPERACAO =", route.get("organizacao", {}).get("nome"))
 
             # Mapa real com tiles OSM, marcadores do payload e route_geometry.
             operation_name = (route.get("organizacao") or {}).get("nome") or "Operação não informada"
@@ -1031,16 +1014,7 @@ class DeliveryApp:
             action_buttons = []
             if route_status in {"PRONTA", "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO"}:
                 def verify_load_click(_):
-                    print("VERIFY_LOAD_CLICK route_id=", route.get("id"))
-                    print("VERIFY_LOAD_STOPS_COUNT=", len(stops))
-                    print("FLET_PAGE_TYPE=", type(self.page).__name__)
-                    print("PAGE_HAS_OPEN=", callable(getattr(self.page, "open", None)))
-                    print("PAGE_DIALOG_BEFORE=", getattr(self.page, "dialog", None))
-                    try:
-                        self.loading_order_dialog(route, stops)
-                    except Exception as exc:
-                        print("LOADING_DIALOG_ERROR=", type(exc).__name__, str(exc))
-                        raise
+                    self.loading_order_dialog(route, stops)
 
                 if not loading_confirmed:
                     action_buttons.append(
@@ -1442,15 +1416,8 @@ class DeliveryApp:
             num_entregas = len(entregas_list)
             concluidas = sum(1 for e in entregas_list if e.get("status") == "ENTREGUE")
             progresso = int(current_route.get("progresso_percentual") or 0)
-            distancia = current_route.get("distancia_km", "--")
-            duracao = current_route.get("duracao_minutos", "--")
-
-            if duracao != "--":
-                hours = int(duracao) // 60
-                minutes = int(duracao) % 60
-                duracao_fmt = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
-            else:
-                duracao_fmt = "--"
+            distancia_fmt = self._route_distance_display(current_route)
+            duracao_fmt = self._route_duration_display(current_route)
 
             current_section = ft.Container(
                 content=ft.Column([
@@ -1483,7 +1450,7 @@ class DeliveryApp:
                         ], spacing=2),
                         ft.Column([
                             ft.Text("Distância", size=12, color=ft.Colors.GREY_700),
-                            ft.Text(f"{distancia} km" if distancia != "--" else "--", size=14),
+                            ft.Text(distancia_fmt, size=14),
                         ], spacing=2),
                         ft.Column([
                             ft.Text("Duração", size=12, color=ft.Colors.GREY_700),
@@ -1533,7 +1500,8 @@ class DeliveryApp:
                 entregas = route.get("entregas", [])
                 num_entregas = len(entregas)
                 progresso = int(route.get("progresso_percentual") or 0)
-                distancia = route.get("distancia_km", "--")
+                distancia = self._route_distance_display(route)
+                duracao = self._route_duration_display(route)
 
                 def handle_view_details(route_obj):
                     def _handler(_):
@@ -1547,8 +1515,9 @@ class DeliveryApp:
                     ),
                     title=ft.Text(f"{route.get('nome', '--')} · {route.get('status', '--').replace('_', ' ').title()}"),
                     subtitle=ft.Text(
+                        f"Data: {self._format_iso_datetime(route.get('data_planejada'))} | "
                         f"Entregas: {num_entregas} | Progresso: {progresso}% | "
-                        f"Distância: {distancia if distancia != '--' else '-'} km"
+                        f"Distância: {distancia} | Duração: {duracao}"
                     ),
                     trailing=ft.IconButton(
                         ft.Icons.INFO,
@@ -1570,6 +1539,39 @@ class DeliveryApp:
             "PRONTA", "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
         ]
 
+    @staticmethod
+    def _format_iso_datetime(value):
+        if value is None or value == "":
+            return "--"
+        if not isinstance(value, str):
+            return str(value)
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+        except (TypeError, ValueError):
+            return value
+
+    @staticmethod
+    def _route_distance_display(route):
+        value = route.get("distancia_real")
+        if value is None or float(value or 0) <= 0:
+            value = route.get("distancia_prevista")
+        if value is None or float(value or 0) <= 0:
+            return "--"
+        return f"{float(value):.2f}".replace(".", ",") + " km"
+
+    @staticmethod
+    def _route_duration_display(route):
+        value = route.get("duracao_real")
+        if value is None or float(value or 0) <= 0:
+            value = route.get("duracao_prevista")
+        if value is None or float(value or 0) <= 0:
+            return "--"
+        total_minutes = round(float(value) * 60)
+        hours, minutes = divmod(total_minutes, 60)
+        if hours:
+            return f"{hours} h {minutes} min"
+        return f"{minutes} min"
+
     def profile_view(self):
         """
         View exclusiva para MOTORISTA.
@@ -1582,7 +1584,7 @@ class DeliveryApp:
             ("Email", user.get("email", "--")),
             ("Telefone", user.get("telefone") or "--"),
             ("Perfil", user.get("perfil", "--")),
-            ("Organização ID", str(user.get("organizacao_id")) if user.get("organizacao_id") else "--"),
+            ("Organização", (user.get("organizacao") or {}).get("nome") or "--"),
             ("Ativo", "Sim" if user.get("ativo") else "Não"),
         ]
 
@@ -2151,8 +2153,6 @@ class DeliveryApp:
         Mostra os pedidos em ordem inversa (último a ser entregue primeiro a ser carregado)
         e exige confirmação antes de permitir iniciar a viagem.
         """
-        print("LOADING_DIALOG_START")
-        print("LOADING_DIALOG_ITEMS=", len(stops))
         try:
             dlg = ft.AlertDialog(title=ft.Text("Ordem de carregamento"), scrollable=True)
             content_list = []
@@ -2216,16 +2216,8 @@ class DeliveryApp:
                     ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dlg)),
                     ft.FilledButton("Confirmar carga", on_click=confirm_and_close),
                 ]
-            print("LOADING_DIALOG_CREATED")
-            print("LOADING_DIALOG_ACTIONS=", dlg.actions is not None)
-            print("PAGE_DIALOG_BEFORE=", getattr(self.page, "dialog", None))
-            print("DIALOG_OPEN_VALUE=", dlg.open)
             self.open_dialog(dlg)
-            print("PAGE_DIALOG_AFTER=", getattr(self.page, "dialog", None))
-            print("DIALOG_OPEN_VALUE=", dlg.open)
-            print("LOADING_DIALOG_OPEN")
-        except Exception as exc:
-            print("LOADING_DIALOG_ERROR=", type(exc).__name__, str(exc))
+        except Exception:
             raise
 
     def _start_route_execution(self, route):
@@ -2678,15 +2670,26 @@ class DeliveryApp:
 
     def route_details_dialog(self, route):
         progress = int(route.get("progresso_percentual") or 0)
+        organization = route.get("organizacao") or {}
+        driver = route.get("motorista") or {}
+        vehicle = route.get("veiculo") or {}
+        vehicle_label = "--"
+        if vehicle:
+            vehicle_label = " · ".join(filter(None, [
+                f"{vehicle.get('marca', '')} {vehicle.get('modelo', '')}".strip(),
+                vehicle.get("placa"),
+            ])) or "--"
         content = ft.Column([
             ft.Text(f'Nome: {route["nome"]}'),
             ft.Text(f'Descrição: {route.get("descricao") or "-"}'),
             ft.Text(f'Status: {route["status"].replace("_", " ")}'),
-            ft.Text(f'Veículo: {route.get("veiculo_id") or "-"}'),
-            ft.Text(f'Motorista: {route.get("motorista_id") or "-"}'),
-            ft.Text(f'Organização: {route.get("organizacao_id")}'),
+            ft.Text(f'Veículo: {vehicle_label if vehicle else route.get("veiculo_id") or "--"}'),
+            ft.Text(f'Motorista: {driver.get("nome") if driver else route.get("motorista_id") or "--"}'),
+            ft.Text(f'Organização: {organization.get("nome") if organization else route.get("organizacao_id") or "--"}'),
             ft.Text(f'Entregas: {len(route.get("entregas") or [])}'),
-            ft.Text(f'Data planejada: {route.get("data_planejada") or "-"}'),
+            ft.Text(f'Data planejada: {self._format_iso_datetime(route.get("data_planejada"))}'),
+            ft.Text(f'Data de início: {self._format_iso_datetime(route.get("data_inicio"))}'),
+            ft.Text(f'Data de conclusão: {self._format_iso_datetime(route.get("data_conclusao"))}'),
             ft.Text(f'Progresso: {progress}%'),
             ft.ProgressBar(value=min(max(progress / 100, 0), 1), bar_height=8),
         ], tight=True)
