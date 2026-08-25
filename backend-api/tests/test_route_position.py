@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database import SessionLocal
+from app.security import create_token
 from app.models import Organizacao, Perfil, Rota, RotaPosicao, StatusRota, Usuario, Veiculo
 
 
@@ -20,7 +21,8 @@ def route_position_payload() -> tuple[dict, int]:
             organizacao_id=organization.id,
             motorista_id=driver.id,
             veiculo_id=vehicle.id if vehicle else None,
-            status=StatusRota.PRONTA,
+            status=StatusRota.EM_EXECUCAO,
+            carga_confirmada=True,
         )
         db.add(route)
         db.commit()
@@ -39,9 +41,15 @@ def route_position_payload() -> tuple[dict, int]:
         }, route.id
 
 
+def driver_headers(payload: dict) -> dict:
+    with SessionLocal() as db:
+        driver = db.get(Usuario, payload["motorista_id"])
+        return {"Authorization": f"Bearer {create_token(driver)}"}
+
+
 def test_create_route_position_persists(client: TestClient, admin_headers: dict) -> None:
     payload, route_id = route_position_payload()
-    response = client.post(f'/api/rotas/{route_id}/posicoes', headers=admin_headers, json=payload)
+    response = client.post(f'/api/rotas/{route_id}/posicoes', headers=driver_headers(payload), json=payload)
 
     assert response.status_code == 201
     data = response.json()
@@ -64,8 +72,8 @@ def test_create_route_position_persists(client: TestClient, admin_headers: dict)
 def test_create_route_position_broadcasts(client: TestClient, admin_headers: dict) -> None:
     payload, route_id = route_position_payload()
 
-    with client.websocket_connect('/ws/tracking') as websocket:
-        response = client.post(f'/api/rotas/{route_id}/posicoes', headers=admin_headers, json=payload)
+    with client.websocket_connect('/ws/tracking', headers=admin_headers) as websocket:
+        response = client.post(f'/api/rotas/{route_id}/posicoes', headers=driver_headers(payload), json=payload)
         assert response.status_code == 201
         data = response.json()
 
@@ -80,7 +88,7 @@ def test_create_route_position_rejects_invalid_coordinates(client: TestClient, a
     payload, route_id = route_position_payload()
     payload['latitude'] = '91.0'
 
-    response = client.post(f'/api/rotas/{route_id}/posicoes', headers=admin_headers, json=payload)
+    response = client.post(f'/api/rotas/{route_id}/posicoes', headers=driver_headers(payload), json=payload)
 
     assert response.status_code == 422
 
@@ -89,7 +97,7 @@ def test_create_route_position_rejects_unknown_vehicle(client: TestClient, admin
     payload, route_id = route_position_payload()
     payload['veiculo_id'] = 9999
 
-    response = client.post(f'/api/rotas/{route_id}/posicoes', headers=admin_headers, json=payload)
+    response = client.post(f'/api/rotas/{route_id}/posicoes', headers=driver_headers(payload), json=payload)
 
     assert response.status_code == 404
 
@@ -98,7 +106,7 @@ def test_create_route_position_rejects_vehicle_not_matching_route(client: TestCl
     payload, route_id = route_position_payload()
     payload['veiculo_id'] = 2
 
-    response = client.post(f'/api/rotas/{route_id}/posicoes', headers=admin_headers, json=payload)
+    response = client.post(f'/api/rotas/{route_id}/posicoes', headers=driver_headers(payload), json=payload)
 
     assert response.status_code == 422
 
@@ -106,8 +114,8 @@ def test_create_route_position_rejects_vehicle_not_matching_route(client: TestCl
 def test_create_route_position_integration_persist_and_broadcast(client: TestClient, admin_headers: dict) -> None:
     payload, route_id = route_position_payload()
 
-    with client.websocket_connect('/ws/tracking') as websocket:
-        response = client.post(f'/api/rotas/{route_id}/posicoes', headers=admin_headers, json=payload)
+    with client.websocket_connect('/ws/tracking', headers=admin_headers) as websocket:
+        response = client.post(f'/api/rotas/{route_id}/posicoes', headers=driver_headers(payload), json=payload)
         assert response.status_code == 201
         created = response.json()
 

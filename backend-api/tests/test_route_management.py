@@ -219,10 +219,10 @@ def test_route_lifecycle_and_tracking_integration(client: TestClient, admin_head
     assert started["status"] == "EM_EXECUCAO"
     assert started["data_inicio"] is not None
 
-    with client.websocket_connect("/ws/tracking") as websocket:
+    with client.websocket_connect("/ws/tracking", headers=admin_headers) as websocket:
         position_response = client.post(
             f"/api/rotas/{route['id']}/posicoes",
-            headers=admin_headers,
+            headers=_login(client, driver["email"]),
             json={
                 "latitude": -23.55052,
                 "longitude": -46.633308,

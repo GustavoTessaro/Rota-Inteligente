@@ -20,7 +20,10 @@ from .routers import (
     veiculos_router,
 )
 from .seed import seed_database
-from .tracking import manager
+from .tracking import TrackingConnection, manager
+from .database import SessionLocal
+from .models import Perfil
+from .security import authenticate_token
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -63,7 +66,21 @@ def health():
 
 @app.websocket("/ws/tracking")
 async def tracking_socket(websocket: WebSocket):
-    await manager.connect(websocket)
+    authorization = websocket.headers.get("authorization", "")
+    if not authorization.lower().startswith("bearer "):
+        await websocket.close(code=1008, reason="Authorization obrigatória")
+        return
+    try:
+        with SessionLocal() as db:
+            user = authenticate_token(authorization[7:].strip(), db)
+            if user.perfil == Perfil.MOTORISTA:
+                await websocket.close(code=1008, reason="Perfil não autorizado")
+                return
+            connection = TrackingConnection(websocket, user.id, user.perfil, user.organizacao_id)
+            await manager.connect(connection)
+    except Exception:
+        await websocket.close(code=1008, reason="Autenticação inválida")
+        return
     try:
         while True:
             await websocket.receive_text()

@@ -141,7 +141,13 @@ class DeliveryApp:
         self.routes_view(status_filter="")
 
     def _connect_tracking_socket(self):
-        if not self._tracking_connection_available() or websockets is None:
+        if (
+            not self._tracking_connection_available()
+            or websockets is None
+            or not self.user
+            or self.user.get("perfil") == "MOTORISTA"
+            or not self.api.token
+        ):
             return
 
         def runner():
@@ -149,7 +155,10 @@ class DeliveryApp:
             while self.user is not None:
                 try:
                     async def _listen():
-                        async with websockets.connect(build_tracking_ws_url()) as ws:
+                        async with websockets.connect(
+                            build_tracking_ws_url(),
+                            additional_headers={"Authorization": f"Bearer {self.api.token}"},
+                        ) as ws:
                             self.websocket_client = ws
                             self._tracking_loop = asyncio.get_running_loop()
                             self._tracking_stop_event = asyncio.Event()

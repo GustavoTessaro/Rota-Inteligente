@@ -900,8 +900,16 @@ async def create_route_position(
     db: Session = Depends(get_db),
     user: Usuario = Depends(current_user),
 ):
+    if user.perfil != Perfil.MOTORISTA:
+        raise HTTPException(403, "Somente motoristas podem publicar posições")
     rota = get_or_404(db, Rota, rota_id)
     ensure_route_access_scope(user, rota)
+    if rota.motorista_id != user.id:
+        raise HTTPException(403, "A rota não pertence ao motorista autenticado")
+    if rota.status != StatusRota.EM_EXECUCAO:
+        raise HTTPException(422, "Posições só podem ser publicadas em rota EM_EXECUCAO")
+    if rota.veiculo_id is None:
+        raise HTTPException(422, "A rota precisa possuir veículo atribuído")
 
     if data.veiculo_id is not None:
         veiculo = get_or_404(db, Veiculo, data.veiculo_id)
@@ -920,12 +928,21 @@ async def create_route_position(
         if rota.motorista_id is not None and motorista.id != rota.motorista_id:
             raise HTTPException(422, "Motorista deve ser o mesmo associado à rota")
 
-    posicao = RotaPosicao(rota_id=rota_id, **data.model_dump(exclude_none=True))
+    if data.motorista_id is not None and data.motorista_id != user.id:
+        raise HTTPException(403, "Motorista informado não corresponde ao autenticado")
+    if data.veiculo_id is not None and data.veiculo_id != rota.veiculo_id:
+        raise HTTPException(403, "Veículo informado não corresponde à rota")
+    posicao = RotaPosicao(
+        rota_id=rota_id,
+        motorista_id=user.id,
+        veiculo_id=rota.veiculo_id,
+        **data.model_dump(exclude_none=True, exclude={"motorista_id", "veiculo_id"}),
+    )
     db.add(posicao)
     commit(db)
     db.refresh(posicao)
     payload = jsonable_encoder(RotaPosicaoOut.model_validate(posicao))
-    await manager.broadcast({"type": "rota_posicao", "payload": payload})
+    await manager.broadcast({"type": "rota_posicao", "payload": payload}, rota.organizacao_id)
     return posicao
 
 

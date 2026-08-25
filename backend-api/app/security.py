@@ -31,13 +31,10 @@ def create_token(user: Usuario) -> str:
     )
 
 
-def current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer),
-    db: Session = Depends(get_db),
-) -> Usuario:
+def authenticate_token(token: str, db: Session) -> Usuario:
     error = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido ou expirado")
     try:
-        payload = jwt.decode(credentials.credentials, settings.jwt_secret, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
         user_id = int(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
         raise error
@@ -45,6 +42,13 @@ def current_user(
     if not user or not user.ativo:
         raise error
     return user
+
+
+def current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer),
+    db: Session = Depends(get_db),
+) -> Usuario:
+    return authenticate_token(credentials.credentials, db)
 
 
 def require_roles(*roles: Perfil):
