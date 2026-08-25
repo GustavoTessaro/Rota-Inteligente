@@ -1,26 +1,29 @@
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.models import Entrega, Rota, StatusEntrega, StatusRota, StatusVeiculo, Usuario, Veiculo
+from app.models import Entrega, Organizacao, Pedido, Rota, RotaEntrega, StatusEntrega, StatusRota, StatusVeiculo, Usuario, Veiculo
 
 
 def test_dashboard_endpoint_returns_live_metrics(client: TestClient, admin_headers: dict) -> None:
     with SessionLocal() as db:
-        route = db.get(Rota, 1)
-        assert route is not None
-
-        vehicle = db.get(Veiculo, route.veiculo_id)
+        vehicle = db.scalar(select(Veiculo).order_by(Veiculo.id))
         assert vehicle is not None
         vehicle.status = StatusVeiculo.DISPONIVEL
 
-        driver = db.get(Usuario, route.motorista_id)
+        driver = db.scalar(select(Usuario).where(Usuario.perfil == "MOTORISTA").order_by(Usuario.id))
         assert driver is not None
         driver.ativo = True
 
+        organization = db.get(Organizacao, vehicle.organizacao_id)
+        order = db.scalar(select(Pedido).order_by(Pedido.id))
+        assert order is not None
+        order.organizacao_id = organization.id
+
         delayed_delivery = Entrega(
-            pedido_id=1,
+            pedido_id=order.id,
             entregador_id=driver.id,
             endereco_origem_id=1,
             endereco_destino_id=1,
@@ -33,7 +36,17 @@ def test_dashboard_endpoint_returns_live_metrics(client: TestClient, admin_heade
         db.commit()
         db.refresh(delayed_delivery)
 
-        route.status = StatusRota.EM_EXECUCAO
+        route = Rota(
+            nome="Rota do dashboard",
+            descricao="Rota criada pelo teste",
+            organizacao_id=organization.id,
+            veiculo_id=vehicle.id,
+            motorista_id=driver.id,
+            status=StatusRota.EM_EXECUCAO,
+        )
+        db.add(route)
+        db.flush()
+        db.add(RotaEntrega(rota_id=route.id, entrega_id=delayed_delivery.id, ordem_visita=1, sequencia_otimizada=1))
         db.commit()
 
     response = client.get('/api/relatorios/dashboard', headers=admin_headers)

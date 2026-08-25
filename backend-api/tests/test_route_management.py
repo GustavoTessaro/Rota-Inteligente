@@ -53,7 +53,7 @@ def test_route_uses_organization_principal_address_and_persists_metrics(client: 
     org, address = _seed_organization_with_principal_address("Operação Norte")
 
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    delivery = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
     with SessionLocal() as db:
         pedido = db.get(Pedido, delivery["pedido_id"])
         assert pedido is not None
@@ -85,8 +85,8 @@ def test_route_rejects_mixed_organizations(client: TestClient, admin_headers: di
     org_b, _ = _seed_organization_with_principal_address("Operação Sul B")
 
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    first = next(item for item in deliveries if item["status"] != "CANCELADA")
-    second = next(item for item in deliveries if item["status"] != "CANCELADA" and item["pedido_id"] != first["pedido_id"])
+    first = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
+    second = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA" and item["pedido_id"] != first["pedido_id"])
 
     with SessionLocal() as db:
         pedido_a = db.get(Pedido, first["pedido_id"])
@@ -124,7 +124,7 @@ def test_route_rejects_organization_without_principal_address(client: TestClient
         db.refresh(org)
 
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    delivery = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
     with SessionLocal() as db:
         pedido = db.get(Pedido, delivery["pedido_id"])
         assert pedido is not None
@@ -146,7 +146,7 @@ def test_route_rejects_organization_without_principal_address(client: TestClient
 
 def test_route_rejects_legacy_order_without_organization(client: TestClient, admin_headers: dict) -> None:
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    delivery = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     with SessionLocal() as db:
         pedido = db.get(Pedido, delivery["pedido_id"])
@@ -176,7 +176,7 @@ def test_route_lifecycle_and_tracking_integration(client: TestClient, admin_head
     vehicle = next(item for item in vehicles if item["ativo"])
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
     organization = next(item for item in organizations if item["id"] == vehicle["organizacao_id"])
-    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    delivery = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     create_response = client.post(
         "/api/rotas/gerar",
@@ -202,6 +202,12 @@ def test_route_lifecycle_and_tracking_integration(client: TestClient, admin_head
     list_response = client.get("/api/rotas?limit=10&offset=0", headers=admin_headers)
     assert list_response.status_code == 200
     assert any(item["id"] == route["id"] for item in list_response.json())
+
+    confirm_response = client.patch(
+        f"/api/rotas/{route['id']}/confirmar-carga",
+        headers=admin_headers,
+    )
+    assert confirm_response.status_code == 200
 
     start_response = client.patch(
         f"/api/rotas/{route['id']}/status",
@@ -276,12 +282,18 @@ def test_route_can_be_paused_and_resumed_with_progress(client: TestClient, admin
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
             "status": "PLANEJADA",
-            "pedido_ids": [deliveries[0]["pedido_id"]],
+            "pedido_ids": [next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")["pedido_id"]],
             "pontos_coleta_ids": [organizations[0]["id"]],
         },
     )
     assert create_response.status_code == 201
     route = create_response.json()
+
+    confirm_response = client.patch(
+        f"/api/rotas/{route['id']}/confirmar-carga",
+        headers=admin_headers,
+    )
+    assert confirm_response.status_code == 200
 
     start_response = client.patch(
         f"/api/rotas/{route['id']}/status",
@@ -317,7 +329,7 @@ def test_route_start_requires_vehicle_and_driver(client: TestClient, admin_heade
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
 
     organization = organizations[0]
-    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    delivery = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     create_response = client.post(
         "/api/rotas/gerar",
@@ -351,7 +363,7 @@ def test_driver_only_sees_assigned_route(client: TestClient, admin_headers: dict
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
     vehicle = next(item for item in vehicles if item["ativo"])
     organization = next(item for item in organizations if item["id"] == vehicle["organizacao_id"])
-    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    delivery = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     create_response = client.post(
         "/api/rotas/gerar",
@@ -383,7 +395,7 @@ def test_route_execution_uses_optimized_order_for_next_stop(client: TestClient, 
 
     vehicle = next(item for item in vehicles if item["ativo"])
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
-    valid_deliveries = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
+    valid_deliveries = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:2]
     assert len(valid_deliveries) >= 2
 
     route_response = client.post(
@@ -421,7 +433,7 @@ def test_driver_can_complete_current_delivery_and_advance_progress(client: TestC
 
     vehicle = next(item for item in vehicles if item["ativo"])
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
-    valid_deliveries = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
+    valid_deliveries = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:2]
 
     route_response = client.post(
         "/api/rotas/gerar",
@@ -440,6 +452,12 @@ def test_driver_can_complete_current_delivery_and_advance_progress(client: TestC
     )
     assert route_response.status_code == 201
     route = route_response.json()
+
+    confirm_response = client.patch(
+        f"/api/rotas/{route['id']}/confirmar-carga",
+        headers=admin_headers,
+    )
+    assert confirm_response.status_code == 200
 
     route_start = client.patch(
         f"/api/rotas/{route['id']}/status",
@@ -486,7 +504,7 @@ def test_route_finalizes_after_all_deliveries_complete(client: TestClient, admin
 
     vehicle = next(item for item in vehicles if item["ativo"])
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
-    valid_deliveries = [item for item in deliveries if item["status"] != "CANCELADA"][:1]
+    valid_deliveries = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:1]
 
     route_response = client.post(
         "/api/rotas/gerar",
@@ -517,11 +535,7 @@ def test_route_finalizes_after_all_deliveries_complete(client: TestClient, admin
         json={"status": "ENTREGUE", "observacao": "Última entrega concluída"},
     )
 
-    completed = client.patch(
-        f"/api/rotas/{route['id']}/status",
-        headers=admin_headers,
-        json={"status": "FINALIZADA", "progresso_percentual": 100, "evento": "FINALIZADA", "observacao": "Rota concluída"},
-    )
+    completed = client.get(f"/api/rotas/{route['id']}", headers=admin_headers)
     assert completed.status_code == 200
     assert completed.json()["status"] == "FINALIZADA"
     assert completed.json()["progresso_percentual"] == 100
@@ -535,7 +549,7 @@ def test_current_backend_does_not_enforce_sequential_delivery_guard(client: Test
 
     vehicle = next(item for item in vehicles if item["ativo"])
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
-    valid_deliveries = [item for item in deliveries if item["status"] != "CANCELADA"][:2]
+    valid_deliveries = [item for item in deliveries if item["status"] == "AGUARDANDO_COLETA"][:2]
 
     route_response = client.post(
         "/api/rotas/gerar",
@@ -572,7 +586,7 @@ def test_gestor_cannot_assign_route_to_other_organization(client: TestClient, ad
     organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
     other_org = next(item for item in organizations if item["id"] != 1)
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=gestor_headers).json()
-    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    delivery = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     response = client.post(
         "/api/rotas/gerar",

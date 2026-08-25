@@ -332,8 +332,10 @@ def test_order_status_uses_json_body(client, admin_headers):
 def test_create_order_with_multiple_items(client, admin_headers):
     client_id = client.get("/api/clientes", headers=admin_headers).json()[0]["id"]
     products = client.get("/api/produtos", headers=admin_headers).json()[:2]
+    organization = client.get("/api/organizacoes", headers=admin_headers).json()[0]
     response = client.post("/api/pedidos", headers=admin_headers, json={
         "cliente_id": client_id,
+        "organizacao_id": organization["id"],
         "prioridade": "ALTA",
         "itens": [
             {"produto_id": products[0]["id"], "quantidade": 2, "valor_unitario": 10},
@@ -347,8 +349,10 @@ def test_create_order_with_multiple_items(client, admin_headers):
 def test_order_item_crud_and_order_delete(client, admin_headers):
     client_id = client.get("/api/clientes", headers=admin_headers).json()[0]["id"]
     product = client.get("/api/produtos", headers=admin_headers).json()[0]
+    organization = client.get("/api/organizacoes", headers=admin_headers).json()[0]
     order = client.post("/api/pedidos", headers=admin_headers, json={
         "cliente_id": client_id,
+        "organizacao_id": organization["id"],
         "itens": [{"produto_id": product["id"], "quantidade": 1, "valor_unitario": 10}],
     }).json()
 
@@ -369,6 +373,7 @@ def test_order_item_crud_and_order_delete(client, admin_headers):
 
     updated_order = client.put(f'/api/pedidos/{order["id"]}', headers=admin_headers, json={
         "cliente_id": client_id,
+        "organizacao_id": organization["id"],
         "prioridade": "URGENTE",
         "itens": [{"produto_id": product["id"], "quantidade": 2, "valor_unitario": 20}],
     })
@@ -639,7 +644,7 @@ def test_create_route(client, admin_headers):
     organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
     organization = next(item for item in organizations if item["id"] == vehicle["organizacao_id"])
     deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
-    entrega = next(item for item in deliveries if item["status"] != "CANCELADA")
+    entrega = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     response = client.post(
         "/api/rotas/gerar",
@@ -671,7 +676,7 @@ def test_update_route_status_and_history(client, admin_headers):
     vehicle = next(item for item in vehicles if item["ativo"])
     motorista = next(item for item in users if item["perfil"] == "MOTORISTA")
     organization = next(item for item in organizations if item["id"] == vehicle["organizacao_id"])
-    entrega = next(item for item in deliveries if item["status"] != "CANCELADA")
+    entrega = next(item for item in deliveries if item["status"] == "AGUARDANDO_COLETA")
 
     create_response = client.post(
         "/api/rotas/gerar",
@@ -689,6 +694,12 @@ def test_update_route_status_and_history(client, admin_headers):
     )
     assert create_response.status_code == 201
     rota = create_response.json()
+
+    confirm_response = client.patch(
+        f'/api/rotas/{rota["id"]}/confirmar-carga',
+        headers=admin_headers,
+    )
+    assert confirm_response.status_code == 200
 
     response = client.patch(
         f'/api/rotas/{rota["id"]}/status',

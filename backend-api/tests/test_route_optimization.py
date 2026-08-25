@@ -4,10 +4,12 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.models import Endereco, Entrega, Organizacao, Pedido, Rota, RotaEntrega, StatusEntrega, StatusPedido, StatusRota, Usuario
 from app.services.google_maps_service import GoogleMapsService, _encode_polyline
+from app.config import settings
 
 
 def _generate_single_order_route(client: TestClient, admin_headers: dict, order: dict, status: str = "PRONTA", expected_status: int = 201) -> dict | None:
@@ -166,11 +168,12 @@ def test_default_route_optimization_emits_real_metrics() -> None:
     assert optimization["encoded_polyline"] is not None
 
 
-def test_default_route_optimization_uses_urban_speed_for_duration() -> None:
+def test_default_route_optimization_uses_urban_speed_for_duration(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "use_google_route_optimization", False)
     optimization = GoogleMapsService().optimize_route(
-        origin={"lat": -27.815300, "lng": -50.325000},
-        destination={"lat": -27.865000, "lng": -50.330000},
-        waypoints=[{"lat": -27.835000, "lng": -50.327500}],
+            origin={"lat": -27.815300, "lng": -50.325000},
+            destination={"lat": -27.865000, "lng": -50.330000},
+            waypoints=[{"lat": -27.835000, "lng": -50.327500}],
     )
 
     distance_km = optimization["distance_meters"] / 1000
@@ -184,23 +187,30 @@ def test_default_route_optimization_uses_urban_speed_for_duration() -> None:
 
 def _create_route_with_delivery(client: TestClient, admin_headers: dict) -> dict:
     organizations = client.get("/api/organizacoes?limit=10&offset=0", headers=admin_headers).json()
-    deliveries = client.get("/api/entregas?limit=100&offset=0", headers=admin_headers).json()
     vehicles = client.get("/api/veiculos", headers=admin_headers).json()
     users = client.get("/api/usuarios", headers=admin_headers).json()
 
     vehicle = next(item for item in vehicles if item["ativo"])
     driver = next(item for item in users if item["perfil"] == "MOTORISTA" and item["ativo"])
     organization = next(item for item in organizations if item["id"] == vehicle["organizacao_id"])
-    delivery = next(item for item in deliveries if item["status"] != "CANCELADA")
+    order = _fresh_order(client, admin_headers)
 
     with SessionLocal() as db:
-        address = db.get(Endereco, delivery["endereco_destino_id"])
+        persisted_order = db.get(Pedido, order["id"])
+        address = db.get(Endereco, persisted_order.endereco_entrega_id)
         if address is not None:
             address.latitude = Decimal("-23.550520")
             address.longitude = Decimal("-46.633308")
             db.commit()
 
-    response = client.post(
+    with patch("app.routers.rotas.RouteOptimizationService.optimize_route", return_value={
+        "optimized_order": [0],
+        "ordered_waypoints": [{"lat": -23.550520, "lng": -46.633308}],
+        "distance_meters": 1000,
+        "duration_seconds": 120,
+        "encoded_polyline": "fixture",
+    }):
+        response = client.post(
         "/api/rotas/gerar",
         headers=admin_headers,
         json={
@@ -210,16 +220,17 @@ def _create_route_with_delivery(client: TestClient, admin_headers: dict) -> dict
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
             "status": "PLANEJADA",
-            "pedido_ids": [delivery["pedido_id"]],
+            "pedido_ids": [order["id"]],
             "pontos_coleta_ids": [organization["id"]],
-        },
-    )
+            },
+        )
     assert response.status_code == 201
     return response.json()
 
 
 def test_generate_route_optimizes_and_persists_metrics(client: TestClient, admin_headers: dict) -> None:
     route = _create_route_with_delivery(client, admin_headers)
+    fresh_order = _fresh_order(client, admin_headers)
 
     with patch("app.routers.rotas.RouteOptimizationService.optimize_route", return_value={
         "optimized_order": [0],
@@ -240,7 +251,7 @@ def test_generate_route_optimizes_and_persists_metrics(client: TestClient, admin
                 "veiculo_id": route["veiculo_id"],
                 "motorista_id": route["motorista_id"],
                 "status": "OTIMIZANDO",
-                "pedido_ids": [route["entregas"][0]["entrega_id"] if "entrega_id" in route["entregas"][0] else route["entregas"][0]["id"]],
+                "pedido_ids": [fresh_order["id"]],
                 "pontos_coleta_ids": [route["organizacao_id"]],
             },
         )
@@ -356,19 +367,43 @@ def test_optimize_route_geocodes_missing_coordinates(client: TestClient, admin_h
 
 
 def test_optimize_route_requires_coordinates(client: TestClient, admin_headers: dict) -> None:
-    orders = client.get("/api/pedidos?limit=100&offset=0", headers=admin_headers).json()
-    order = next(item for item in orders if item.get("endereco_entrega_id") is not None)
-    response = client.post(
+    order = _fresh_order(client, admin_headers)
+    organizations = client.get("/api/organizacoes", headers=admin_headers).json()
+    organization = next(item for item in organizations if item.get("endereco_id"))
+    with patch("app.routers.rotas.RouteOptimizationService.optimize_route", return_value={
+        "optimized_order": [0],
+        "ordered_waypoints": [{"lat": -23.55, "lng": -46.63}],
+        "distance_meters": 1000,
+        "duration_seconds": 120,
+        "encoded_polyline": "fixture",
+    }):
+        response = client.post(
         "/api/rotas/gerar",
         headers=admin_headers,
         json={
             "nome": "Rota sem coordenadas",
             "descricao": "Deve falhar",
-            "organizacao_id": 1,
+            "organizacao_id": organization["id"],
             "status": "PLANEJADA",
             "pedido_ids": [order["id"]],
-            "pontos_coleta_ids": [1],
+            "pontos_coleta_ids": [organization["id"]],
         },
-    )
+        )
+    assert response.status_code == 201, response.text
+    route_id = response.json()["id"]
+    with SessionLocal() as db:
+        route = db.get(Rota, route_id)
+        address_ids = {
+            route.origem_endereco_id,
+            route.destino_endereco_id,
+            route.entregas[0].entrega.endereco_destino_id,
+        }
+        for address in db.scalars(select(Endereco).where(Endereco.id.in_(address_ids))).all():
+            address.latitude = None
+            address.longitude = None
+        db.commit()
+    fake_geocoder = type("FakeGeocoder", (), {"geocode": lambda self, query: {"results": []}})()
+    with patch("app.routers.rotas.get_geocoding_service", return_value=fake_geocoder), patch("app.routers.rotas._resolve_address_coordinates", return_value=None):
+        response = client.post(f"/api/rotas/{route_id}/otimizar", headers=admin_headers)
     assert response.status_code == 422
     assert "coordenada" in response.json()["detail"].lower()

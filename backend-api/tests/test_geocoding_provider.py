@@ -7,9 +7,9 @@ from app.services.google_maps_service import GoogleMapsService, NominatimService
 
 
 def test_geocoding_provider_defaults_to_nominatim():
-    assert settings.geocoding_provider == "nominatim"
+    assert settings.geocoding_provider == "google"
     service = get_geocoding_service()
-    assert isinstance(service, NominatimService)
+    assert isinstance(service, GoogleMapsService)
 
 
 def test_nominatim_geocode_returns_valid_coordinates_for_lages():

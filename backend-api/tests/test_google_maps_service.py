@@ -8,6 +8,7 @@ class MockResponse:
     def __init__(self, json_data=None, status_code=200, raise_on_raise_for_status=None, json_exception=None):
         self._json = json_data or {}
         self.status_code = status_code
+        self.headers = {}
         self._raise = raise_on_raise_for_status
         self._json_exc = json_exception
 

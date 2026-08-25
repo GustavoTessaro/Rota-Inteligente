@@ -1,4 +1,5 @@
 def test_create_order_with_delivery_address(client, admin_headers):
+    organization = client.get("/api/organizacoes", headers=admin_headers).json()[0]
     customer = client.post("/api/clientes", headers=admin_headers, json={
         "nome": "Cliente Entrega",
         "cpf_cnpj": "11122233344",
@@ -16,6 +17,7 @@ def test_create_order_with_delivery_address(client, admin_headers):
 
     response = client.post("/api/pedidos", headers=admin_headers, json={
         "cliente_id": customer["id"],
+        "organizacao_id": organization["id"],
         "prioridade": "ALTA",
         "forma_pagamento": "PIX",
         "observacoes": "Entrega prioritária",
@@ -60,14 +62,17 @@ def test_generate_route_from_selected_orders_and_collection_points(client, admin
         "tipo": "DESTINO",
     }).json()
     product = client.get("/api/produtos", headers=admin_headers).json()[0]
+    organization = client.get("/api/organizacoes", headers=admin_headers).json()[0]
 
     order_1 = client.post("/api/pedidos", headers=admin_headers, json={
         "cliente_id": customer_1["id"],
+        "organizacao_id": organization["id"],
         "endereco_entrega_id": addr_1["id"],
         "itens": [{"produto_id": product["id"], "quantidade": 1, "valor_unitario": 10}],
     }).json()
     order_2 = client.post("/api/pedidos", headers=admin_headers, json={
         "cliente_id": customer_2["id"],
+        "organizacao_id": organization["id"],
         "endereco_entrega_id": addr_2["id"],
         "itens": [{"produto_id": product["id"], "quantidade": 2, "valor_unitario": 20}],
     }).json()
@@ -92,11 +97,12 @@ def test_generate_route_from_selected_orders_and_collection_points(client, admin
     assert payload["organizacao_id"] == organization["id"]
     assert payload["motorista_id"] == driver["id"]
     assert payload["veiculo_id"] == vehicle["id"]
-    assert payload["status"] == "OTIMIZANDO"
+    assert payload["status"] == "PRONTA"
     assert len(payload["entregas"]) == 2
 
 
 def test_assign_driver_and_vehicle_for_generated_route(client, admin_headers):
+    organization = client.get("/api/organizacoes", headers=admin_headers).json()[0]
     customer = client.post("/api/clientes", headers=admin_headers, json={
         "nome": "Cliente Rota",
         "cpf_cnpj": "12345678909",
@@ -113,6 +119,7 @@ def test_assign_driver_and_vehicle_for_generated_route(client, admin_headers):
     product = client.get("/api/produtos", headers=admin_headers).json()[0]
     order = client.post("/api/pedidos", headers=admin_headers, json={
         "cliente_id": customer["id"],
+        "organizacao_id": organization["id"],
         "endereco_entrega_id": address["id"],
         "itens": [{"produto_id": product["id"], "quantidade": 1, "valor_unitario": 8}],
     }).json()
