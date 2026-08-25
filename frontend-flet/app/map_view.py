@@ -3,6 +3,8 @@ import math
 import flet as ft
 import flet_map as fmap
 
+from .config import MAPTILER_API_KEY
+
 
 class MapView:
     DEFAULT_CENTER = (-27.816, -50.325)
@@ -19,13 +21,17 @@ class MapView:
         self._marker_layer = None
 
     def build(self):
+        if not MAPTILER_API_KEY:
+            raise RuntimeError("MAPTILER_API_KEY não configurada para renderizar o mapa")
         self._marker_layer = fmap.MarkerLayer(markers=self._build_markers())
         layers = [
             fmap.TileLayer(
-                url_template="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-                subdomains=["a", "b", "c"],
+                url_template=(
+                    "https://api.maptiler.com/maps/streets-v4/"
+                    "{z}/{x}/{y}.png?key=" + MAPTILER_API_KEY
+                ),
             ),
-            fmap.SimpleAttribution(text="© OpenStreetMap contributors"),
+            fmap.SimpleAttribution(text="© MapTiler © OpenStreetMap contributors"),
             self._marker_layer,
         ]
         self._control = fmap.Map(
@@ -34,6 +40,7 @@ class MapView:
             initial_zoom=self._zoom(),
             width=self.width,
             height=self.height,
+            expand=True,
         )
         self._control.set_markers = self.set_markers
         self._control.add_marker = self.add_marker

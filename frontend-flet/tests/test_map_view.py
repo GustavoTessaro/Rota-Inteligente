@@ -1,7 +1,14 @@
 import flet as ft
 import flet_map as fmap
+import pytest
 
+import app.map_view as map_view_module
 from app.map_view import MapView
+
+
+@pytest.fixture(autouse=True)
+def configured_maptiler_key(monkeypatch):
+    monkeypatch.setattr(map_view_module, "MAPTILER_API_KEY", "test-only-value")
 
 
 def _marker(vehicle_id, latitude, longitude, title=None):
@@ -22,8 +29,20 @@ def test_map_view_builds_real_map_with_tile_and_marker_layers():
     control = MapView([_marker(1, -27.815, -50.326)]).build()
 
     assert isinstance(control, fmap.Map)
-    assert _layers_of(control, fmap.TileLayer)
+    tile_layers = _layers_of(control, fmap.TileLayer)
+    assert tile_layers
+    assert tile_layers[0].url_template == (
+        "https://api.maptiler.com/maps/streets-v4/"
+        "{z}/{x}/{y}.png?key=test-only-value"
+    )
     assert _layers_of(control, fmap.MarkerLayer)
+
+
+def test_map_view_requires_maptiler_configuration(monkeypatch):
+    monkeypatch.setattr(map_view_module, "MAPTILER_API_KEY", "")
+
+    with pytest.raises(RuntimeError, match="MAPTILER_API_KEY"):
+        MapView().build()
 
 
 def test_map_view_empty_state_keeps_real_map():
@@ -82,3 +101,64 @@ def test_application_refresh_map_markers_keeps_map_contract():
     marker_layer = _layers_of(app.map_control, fmap.MarkerLayer)[0]
     assert len(marker_layer.markers) == 1
     assert marker_layer.markers[0].data["vehicle_id"] == 1
+
+
+def test_map_view_refresh_preserves_map_and_tile_layers():
+    view = MapView()
+    control = view.build()
+    original_layers = control.layers
+
+    view.set_markers([_marker(1, -27.815, -50.326, "ABC1234")])
+    view.set_markers([])
+
+    assert view._control is control
+    assert control.layers is original_layers
+    assert isinstance(control.layers[0], fmap.TileLayer)
+    assert isinstance(control.layers[1], fmap.SimpleAttribution)
+    assert isinstance(control.layers[2], fmap.MarkerLayer)
+
+
+def test_dashboard_map_is_created_once_and_reused_for_refreshes():
+    from unittest.mock import MagicMock, patch
+    from app.application import DeliveryApp
+
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.map_control = None
+    app.dashboard_map_view = None
+    app.vehicle_states = {}
+
+    with patch("app.application.MapView") as map_view_class:
+        map_view = map_view_class.return_value
+        map_view.build.return_value = object()
+        DeliveryApp._ensure_dashboard_map(app, [])
+        first_control = app.map_control
+        DeliveryApp._ensure_dashboard_map(app, [])
+
+    map_view_class.assert_called_once()
+    map_view.build.assert_called_once()
+    assert app.map_control is first_control
+    assert map_view.set_markers.call_count == 1
+
+
+def test_dashboard_refresh_updates_data_without_rebuilding_visible_dashboard():
+    from unittest.mock import MagicMock, patch
+    from app.application import DeliveryApp
+
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.user = {"perfil": "ADMIN"}
+    app.dashboard_active = True
+    app.dashboard_screen_visible = True
+    app.dashboard_initialized = True
+    app.dashboard_data = {"entregas_hoje": 1}
+    app.content = MagicMock()
+    app.content.controls = [object()]
+    app.api = MagicMock()
+    app.api.request.return_value = {"entregas_hoje": 2}
+    app._update_dashboard_controls = MagicMock()
+
+    with patch.object(app, "dashboard_view") as dashboard_view:
+        DeliveryApp._refresh_dashboard(app)
+
+    dashboard_view.assert_not_called()
+    app._update_dashboard_controls.assert_called_once_with({"entregas_hoje": 2})
+    assert app.dashboard_data["entregas_hoje"] == 2
