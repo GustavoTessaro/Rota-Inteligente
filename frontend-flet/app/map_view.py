@@ -1,7 +1,12 @@
+import math
+
 import flet as ft
+import flet_map as fmap
 
 
 class MapView:
+    DEFAULT_CENTER = (-27.816, -50.325)
+
     def __init__(self, markers=None, height=320, width=680, on_marker_click=None, selected_marker_id=None, title=None):
         self.markers = markers or []
         self.height = height
@@ -11,16 +16,24 @@ class MapView:
         self.title = title or "Mapa de monitoramento"
         self.polyline = None
         self._control = None
+        self._marker_layer = None
 
     def build(self):
-        self._control = ft.Container(
-            content=self._build_body(),
+        self._marker_layer = fmap.MarkerLayer(markers=self._build_markers())
+        layers = [
+            fmap.TileLayer(
+                url_template="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                subdomains=["a", "b", "c"],
+            ),
+            fmap.SimpleAttribution(text="© OpenStreetMap contributors"),
+            self._marker_layer,
+        ]
+        self._control = fmap.Map(
+            layers=layers,
+            initial_center=fmap.MapLatitudeLongitude(*self._center()),
+            initial_zoom=self._zoom(),
             width=self.width,
             height=self.height,
-            padding=12,
-            border_radius=18,
-            bgcolor=ft.Colors.BLUE_GREY_50,
-            border=ft.border.all(1, ft.Colors.GREY_300),
         )
         self._control.set_markers = self.set_markers
         self._control.add_marker = self.add_marker
@@ -29,186 +42,112 @@ class MapView:
         self._control.center_on = self.center_on
         return self._control
 
-    def _build_body(self):
-        if not self.markers and not self.polyline:
-            return ft.Column(
-                [
-                    ft.Text(self.title, weight=ft.FontWeight.BOLD, size=16),
-                    ft.Container(height=16),
-                    ft.Icon(ft.Icons.LOCAL_SHIPPING, size=44, color=ft.Colors.GREY_500),
-                    ft.Text("Não há motoristas em atividade no momento.", color=ft.Colors.GREY_700),
-                    ft.Container(height=16),
-                ],
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            )
-
-        route_points = self._decode_polyline(self.polyline) if self.polyline else []
-        marker_points = []
+    def _valid_markers(self):
+        valid = []
         for marker in self.markers:
             try:
-                marker_points.append((float(marker.get("lat")), float(marker.get("lng"))))
-            except (TypeError, ValueError):
+                latitude = float(marker.get("lat"))
+                longitude = float(marker.get("lng"))
+            except (AttributeError, TypeError, ValueError):
                 continue
-        all_points = route_points + marker_points
-        latitudes = [point[0] for point in all_points]
-        longitudes = [point[1] for point in all_points]
+            if -90 <= latitude <= 90 and -180 <= longitude <= 180:
+                valid.append((marker, latitude, longitude))
+        return valid
 
-        if not latitudes or not longitudes:
-            return ft.Column(
-                [
-                    ft.Text(self.title, weight=ft.FontWeight.BOLD, size=16),
-                    ft.Container(height=16),
-                    ft.Icon(ft.Icons.LOCAL_SHIPPING, size=44, color=ft.Colors.GREY_500),
-                    ft.Text("Não há motoristas em atividade no momento.", color=ft.Colors.GREY_700),
-                    ft.Container(height=16),
-                ],
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            )
-
-        min_lat, max_lat = min(latitudes), max(latitudes)
-        min_lng, max_lng = min(longitudes), max(longitudes)
-        if min_lat == max_lat:
-            min_lat -= 0.01
-            max_lat += 0.01
-        if min_lng == max_lng:
-            min_lng -= 0.01
-            max_lng += 0.01
-
-        map_width = max(400, self.width - 24)
-        map_height = max(220, self.height - 24)
-        marker_width = 110
-        marker_height = 52
-        padding = max(16, marker_width / 2, marker_height / 2)
-        available_width = map_width - padding * 2
-        available_height = map_height - padding * 2
-
-        stack_children = [
-            ft.Container(
-                expand=True,
-                bgcolor=ft.Colors.WHITE,
-                border_radius=14,
-                border=ft.border.all(1, ft.Colors.GREY_200),
-            )
-        ]
-
-        if self.polyline:
-            route_points = self._decode_polyline(self.polyline)
-            if route_points:
-                route_segments = self._build_polyline_segments(
-                    route_points,
-                    map_width,
-                    map_height,
-                    padding,
-                    (min_lat, max_lat, min_lng, max_lng),
-                )
-                stack_children.extend(route_segments)
-
-        for marker in self.markers:
-            try:
-                lat = float(marker.get("lat"))
-                lng = float(marker.get("lng"))
-            except (TypeError, ValueError):
-                continue
-            marker_type = marker.get("title") or marker.get("label") or "desconhecido"
-            print(f"MAP MARKER RENDER -> tipo={marker_type} lat={lat} lng={lng}")
-            x = padding + (lng - min_lng) / (max_lng - min_lng) * available_width
-            y = padding + (max_lat - lat) / (max_lat - min_lat) * available_height
-            selected = str(marker.get("id")) == str(self.selected_marker_id)
-            marker_bg = (
-                ft.Colors.GREEN_700
-                if marker.get("is_origin")
-                else ft.Colors.RED_600
-                if selected or marker.get("is_current")
-                else ft.Colors.INDIGO
-            )
-            label = marker.get("title") or marker.get("label") or "Motorista"
-            marker_box = ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Text(
-                            str(marker.get("title") or marker.get("label") or "📍"),
-                            size=20,
-                            color=ft.Colors.WHITE,
-                            text_align=ft.TextAlign.CENTER,
-                        ),
-                        ft.Text(label, size=10, color=ft.Colors.WHITE, text_align=ft.TextAlign.CENTER),
-                    ],
-                    tight=True,
-                    spacing=2,
-                ),
-                width=marker_width,
-                height=marker_height,
-                padding=8,
-                border_radius=12,
-                bgcolor=marker_bg,
-                alignment=ft.alignment.center,
-                on_click=lambda e, marker=marker: self._on_marker_click(marker),
-                opacity=0.95,
-            )
-            stack_children.append(
-                ft.Container(
-                    left=x - marker_width / 2,
-                    top=y - marker_height / 2,
-                    width=marker_width,
-                    height=marker_height,
-                    content=marker_box,
-                )
-            )
-
-        content = ft.Stack(stack_children)
-        return ft.Column(
-            [
-                ft.Text(self.title, weight=ft.FontWeight.BOLD, size=16),
-                ft.Divider(height=10),
-                ft.Container(content=content, width=map_width, height=map_height),
-            ],
-            tight=True,
+    def _center(self):
+        points = [(latitude, longitude) for _, latitude, longitude in self._valid_markers()]
+        if not points:
+            return self.DEFAULT_CENTER
+        return (
+            sum(point[0] for point in points) / len(points),
+            sum(point[1] for point in points) / len(points),
         )
 
-    def _on_marker_click(self, marker: dict):
+    def _zoom(self):
+        points = [(latitude, longitude) for _, latitude, longitude in self._valid_markers()]
+        if len(points) < 2:
+            return 14
+        latitude_span = max(max(point[0] for point in points) - min(point[0] for point in points), 0.001)
+        longitude_span = max(max(point[1] for point in points) - min(point[1] for point in points), 0.001)
+        return max(3, min(18, int(min(math.log2(360 / longitude_span), math.log2(170 / latitude_span)) - 1)))
+
+    def _build_markers(self):
+        result = []
+        for marker, latitude, longitude in self._valid_markers():
+            vehicle_id = marker.get("vehicle_id") or marker.get("id") or "?"
+            title = marker.get("title") or marker.get("label") or f"Veículo {vehicle_id}"
+            content = ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(str(title), size=11, color=ft.Colors.WHITE, weight=ft.FontWeight.BOLD),
+                        ft.Text(f"{latitude:.5f}, {longitude:.5f}", size=9, color=ft.Colors.WHITE),
+                    ],
+                    tight=True,
+                    spacing=1,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                width=118,
+                height=38,
+                padding=4,
+                alignment=ft.alignment.center,
+                bgcolor=ft.Colors.RED_600 if marker.get("is_current") else ft.Colors.INDIGO,
+                border_radius=8,
+                tooltip=f"{title} - {latitude:.5f}, {longitude:.5f}",
+                on_click=lambda event, marker=marker: self._on_marker_click(marker),
+            )
+            result.append(
+                fmap.Marker(
+                    content=content,
+                    coordinates=fmap.MapLatitudeLongitude(latitude, longitude),
+                    data={**marker, "vehicle_id": vehicle_id},
+                )
+            )
+        return result
+
+    def _on_marker_click(self, marker):
         if callable(self.on_marker_click):
             self.on_marker_click(marker)
 
-    def set_markers(self, markers: list):
+    def set_markers(self, markers):
         self.markers = markers or []
-        print(f"MAP MARKERS RECEIVED -> quantidade={len(self.markers)}")
-        for marker in self.markers:
-            marker_type = marker.get("title") or marker.get("label") or "desconhecido"
-            print(
-                f"MAP MARKER -> tipo={marker_type} "
-                f"lat={marker.get('lat')} lng={marker.get('lng')}"
-            )
-        self._refresh()
+        if self._marker_layer is None:
+            return
+        self._marker_layer.markers = self._build_markers()
+        try:
+            self._control.update()
+        except AssertionError:
+            pass
 
-    def add_marker(self, marker: dict):
+    def add_marker(self, marker):
+        vehicle_id = marker.get("vehicle_id") or marker.get("id")
+        self.markers = [item for item in self.markers if (item.get("vehicle_id") or item.get("id")) != vehicle_id]
         self.markers.append(marker)
-        self._refresh()
+        self.set_markers(self.markers)
 
     def clear(self):
-        self.markers = []
-        self._refresh()
+        self.set_markers([])
 
-    def draw_polyline(self, encoded: str):
+    def draw_polyline(self, encoded):
         self.polyline = encoded
-        self._refresh()
 
-    def center_on(self, lat: float, lng: float, zoom: int | None = None):
-        pass
+    def center_on(self, lat, lng, zoom=None):
+        if self._control is not None:
+            self._control.initial_center = fmap.MapLatitudeLongitude(lat, lng)
+            if zoom is not None:
+                self._control.initial_zoom = zoom
+            try:
+                self._control.update()
+            except AssertionError:
+                pass
 
     @staticmethod
-    def _decode_polyline(encoded: str):
+    def _decode_polyline(encoded):
         if not encoded:
             return []
         points = []
-        index = 0
-        lat = 0
-        lng = 0
+        index = lat = lng = 0
         while index < len(encoded):
-            b = 0
-            shift = 0
-            result = 0
+            result, shift = 0, 0
             while True:
                 if index >= len(encoded):
                     return points
@@ -216,12 +155,10 @@ class MapView:
                 index += 1
                 result |= (byte & 0x1F) << shift
                 shift += 5
-                b = byte >> 5
-                if b == 0:
+                if byte < 0x20:
                     break
-            lat += (result & 1 and -(result >> 1) or (result >> 1))
-            result = 0
-            shift = 0
+            lat += ~(result >> 1) if result & 1 else result >> 1
+            result, shift = 0, 0
             while True:
                 if index >= len(encoded):
                     return points
@@ -229,68 +166,8 @@ class MapView:
                 index += 1
                 result |= (byte & 0x1F) << shift
                 shift += 5
-                b = byte >> 5
-                if b == 0:
+                if byte < 0x20:
                     break
-            lng += (result & 1 and -(result >> 1) or (result >> 1))
+            lng += ~(result >> 1) if result & 1 else result >> 1
             points.append((lat / 1e5, lng / 1e5))
         return points
-
-    def _refresh(self):
-        if self._control is None:
-            return
-        self._control.content = self._build_body()
-        try:
-            self._control.update()
-        except Exception:
-            pass
-
-    def _build_polyline_segments(self, route_points, map_width, map_height, padding=16, bounds=None):
-        if not route_points:
-            return []
-        if bounds is None:
-            latitudes = [p[0] for p in route_points]
-            longitudes = [p[1] for p in route_points]
-            min_lat, max_lat = min(latitudes), max(latitudes)
-            min_lng, max_lng = min(longitudes), max(longitudes)
-            if min_lat == max_lat:
-                min_lat -= 0.01
-                max_lat += 0.01
-            if min_lng == max_lng:
-                min_lng -= 0.01
-                max_lng += 0.01
-        else:
-            min_lat, max_lat, min_lng, max_lng = bounds
-
-        pixels = []
-        for lat, lng in route_points:
-            x = padding + (lng - min_lng) / (max_lng - min_lng) * (map_width - padding * 2)
-            y = padding + (max_lat - lat) / (max_lat - min_lat) * (map_height - padding * 2)
-            pixels.append((x, y))
-
-        segment_children = []
-        for (x1, y1), (x2, y2) in zip(pixels, pixels[1:]):
-            dx = abs(x2 - x1)
-            dy = abs(y2 - y1)
-            if dx == 0 and dy == 0:
-                continue
-            width = max(6, dx + 8)
-            height = max(4, dy + 8)
-            left = min(x1, x2)
-            top = min(y1, y2)
-            segment_children.append(
-                ft.Container(
-                    left=left,
-                    top=top,
-                    width=width,
-                    height=height,
-                    content=ft.Container(
-                        bgcolor=ft.Colors.BLUE_600,
-                        border_radius=10,
-                        width=width,
-                        height=height,
-                        opacity=0.9,
-                    ),
-                )
-            )
-        return segment_children

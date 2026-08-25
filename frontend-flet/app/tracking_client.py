@@ -65,6 +65,7 @@ def update_vehicle_state(existing: dict[str, dict[str, Any]], message: Any) -> d
 def build_marker(vehicle_state: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": vehicle_state.get("id"),
+        "vehicle_id": vehicle_state.get("vehicle_id"),
         "lat": vehicle_state.get("latitude"),
         "lng": vehicle_state.get("longitude"),
         "title": vehicle_state.get("title") or f"Veículo {vehicle_state.get('vehicle_id')}",
