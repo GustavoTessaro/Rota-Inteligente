@@ -16,7 +16,7 @@ except Exception:  # pragma: no cover - optional dependency during import
     websockets = None
 
 from .api_client import ApiClient, ApiError
-from .config import MAPTILER_API_KEY, build_tracking_ws_url
+from .config import API_BASE_URL, MAPTILER_API_KEY, build_tracking_ws_url
 from .dashboard_utils import DASHBOARD_INDICATORS, DashboardRefreshController, get_dashboard_indicator_values
 from .driver_location_tracking import DriverLocationTracking
 from .geolocation_provider import GeolocationPermissionDenied, GeolocationProvider, GeolocationServiceUnavailable
@@ -175,63 +175,95 @@ class DeliveryApp:
         self.routes_view(status_filter="")
 
     def _connect_tracking_socket(self):
+        tracking_available = self._tracking_connection_available()
+        websockets_available = websockets is not None
+        user_present = bool(self.user)
+        profile = self.user.get("perfil") if self.user else None
+        token_present = bool(self.api.token)
+        print(
+            f"[ADMIN_WS] PRECHECK tracking_available={tracking_available} "
+            f"websockets_available={websockets_available} user_present={user_present} "
+            f"perfil={profile} token_present={token_present}"
+        )
+        ws_url = build_tracking_ws_url()
+        print(
+            f"[ADMIN_WS] CONNECT_REQUESTED perfil={profile} "
+            f"API_BASE_URL={API_BASE_URL} URL={ws_url} token_present={token_present}"
+        )
         if (
-            not self._tracking_connection_available()
+            not tracking_available
             or websockets is None
             or not self.user
-            or self.user.get("perfil") == "MOTORISTA"
-            or not self.api.token
+            or profile == "MOTORISTA"
+            or not token_present
         ):
             return
 
         def runner():
+            print("[ADMIN_WS] THREAD_STARTED")
             self._set_connection_state("reconectando")
             while self.user is not None:
                 try:
+                    print(f"[ADMIN_WS] CONNECT_ATTEMPT URL={ws_url}")
                     async def _listen():
-                        async with websockets.connect(
-                            build_tracking_ws_url(),
-                            additional_headers={"Authorization": f"Bearer {self.api.token}"},
-                        ) as ws:
-                            self.websocket_client = ws
-                            self._tracking_loop = asyncio.get_running_loop()
-                            self._tracking_stop_event = asyncio.Event()
-                            self._set_connection_state("conectado")
-                            async def consume_messages():
-                                async for raw_message in ws:
-                                    if not raw_message:
-                                        break
-                                    try:
-                                        data = json.loads(raw_message)
-                                    except Exception:
-                                        print("[TRACKING_ADMIN] mensagem ignorada motivo=json inválido")
-                                        continue
-                                    self.vehicle_states = update_vehicle_state(self.vehicle_states, data)
-                                    self._refresh_map_markers()
+                        try:
+                            async with websockets.connect(
+                                ws_url,
+                                additional_headers={"Authorization": f"Bearer {self.api.token}"},
+                            ) as ws:
+                                self.websocket_client = ws
+                                self._tracking_loop = asyncio.get_running_loop()
+                                self._tracking_stop_event = asyncio.Event()
+                                print("[ADMIN_WS] CONNECTED")
+                                self._set_connection_state("conectado")
+                                async def consume_messages():
+                                    async for raw_message in ws:
+                                        if not raw_message:
+                                            break
+                                        try:
+                                            data = json.loads(raw_message)
+                                        except Exception:
+                                            print("[TRACKING_ADMIN] mensagem ignorada motivo=json inválido")
+                                            continue
+                                        message_type = data.get("type") if isinstance(data, dict) else None
+                                        print(
+                                            f"[ADMIN_WS] MESSAGE_RECEIVED tamanho={len(raw_message)} "
+                                            f"type={message_type}"
+                                        )
+                                        print("[ADMIN_WS] DISPATCH_TO_TRACKING_CLIENT")
+                                        self.vehicle_states = update_vehicle_state(self.vehicle_states, data)
+                                        self._refresh_map_markers()
 
-                            consume_task = asyncio.create_task(consume_messages())
-                            stop_task = asyncio.create_task(self._tracking_stop_event.wait())
-                            done, pending = await asyncio.wait(
-                                {consume_task, stop_task},
-                                return_when=asyncio.FIRST_COMPLETED,
-                            )
-                            for task in pending:
-                                task.cancel()
-                            await asyncio.gather(*pending, return_exceptions=True)
-                            for task in done:
-                                if task is consume_task:
-                                    task.result()
-                            self._tracking_stop_event = None
-                            self._tracking_loop = None
-                            self.websocket_client = None
+                                consume_task = asyncio.create_task(consume_messages())
+                                stop_task = asyncio.create_task(self._tracking_stop_event.wait())
+                                done, pending = await asyncio.wait(
+                                    {consume_task, stop_task},
+                                    return_when=asyncio.FIRST_COMPLETED,
+                                )
+                                for task in pending:
+                                    task.cancel()
+                                await asyncio.gather(*pending, return_exceptions=True)
+                                for task in done:
+                                    if task is consume_task:
+                                        task.result()
+                                self._tracking_stop_event = None
+                                self._tracking_loop = None
+                                self.websocket_client = None
+                        finally:
+                            print("[ADMIN_WS] CONNECTION_CLOSED")
 
                     asyncio.run(_listen())
-                except Exception:
+                except Exception as exc:
+                    print(
+                        f"[ADMIN_WS] CONNECT_FAILED exception_type={type(exc).__name__} "
+                        f"exception_message={exc}"
+                    )
                     self.websocket_client = None
                     self._tracking_loop = None
                     self._tracking_stop_event = None
                     if self.user is not None:
                         self._set_connection_state("reconectando")
+                        print("[ADMIN_WS] RETRY delay=3")
                         time.sleep(3)
                     else:
                         break
