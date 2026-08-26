@@ -1,7 +1,6 @@
 ﻿from datetime import datetime, timezone
 from urllib.parse import quote
 import math
-import os
 
 import asyncio
 import json
@@ -64,9 +63,6 @@ class DeliveryApp:
         self.dashboard_initialized = False
         self.dashboard_screen_visible = False
         self.dashboard_metric_texts = []
-        self.dashboard_map_wrapper = None
-        self.dashboard_map_debug_logged = False
-        self.dashboard_root_row = None
         self.dashboard_refresh_controller = DashboardRefreshController(callback=self._refresh_dashboard, interval=5.0)
         self.content = ft.Column(
             expand=True,
@@ -152,10 +148,8 @@ class DeliveryApp:
                 title="Motoristas em atividade",
             )
             self.map_control = self.dashboard_map_view.build()
-            self.map_control.expand = False
         else:
             self.dashboard_map_view.set_markers(markers)
-            self.map_control.expand = False
         return self.map_control
 
     def _select_route_marker(self, marker):
@@ -453,8 +447,7 @@ class DeliveryApp:
             ],
         )
         self._connect_tracking_socket()
-        self.dashboard_root_row = ft.Row([rail, ft.VerticalDivider(width=1), self.content], expand=True)
-        self.page.add(self.dashboard_root_row)
+        self.page.add(ft.Row([rail, ft.VerticalDivider(width=1), self.content], expand=True))
         self.dashboard_active = True
         self.dashboard_screen_visible = True
         self._start_dashboard_refresh_loop()
@@ -497,61 +490,6 @@ class DeliveryApp:
             control.value = str(values.get(key, 0))
         self._refresh_map_markers()
         self.page.update()
-
-    def _log_dashboard_tree(self, map_control):
-        def parent_chain(control, label):
-            print(f"{label}_CHAIN_START=true")
-            current = control
-            level = 0
-            seen = set()
-            while current is not None and id(current) not in seen:
-                seen.add(id(current))
-                parent = getattr(current, "parent", None)
-                print(
-                    f"{label}_LEVEL={level} "
-                    f"TYPE={type(current).__name__} "
-                    f"ID={id(current)} "
-                    f"PARENT_TYPE={type(parent).__name__}"
-                )
-                current = parent
-                level += 1
-            print(f"{label}_CHAIN_END=true")
-
-        def children(control):
-            result = []
-            controls = getattr(control, "controls", None)
-            if controls:
-                result.extend(controls)
-            content = getattr(control, "content", None)
-            if content is not None:
-                result.append(content)
-            return result
-
-        def contains(root, target, seen=None):
-            seen = seen or set()
-            if root is None or id(root) in seen:
-                return False
-            seen.add(id(root))
-            if root is target:
-                return True
-            return any(contains(child, target, seen) for child in children(root))
-
-        parent_chain(map_control, "MAP")
-        parent_chain(self.dashboard_map_wrapper, "WRAPPER")
-        parent_chain(self.content, "SELF_CONTENT")
-        parent_chain(self.dashboard_root_row, "ROOT_ROW")
-        page_controls = list(getattr(self.page, "controls", []) or [])
-        print(f"PAGE_CONTROL_COUNT={len(page_controls)}")
-        print(f"MAP_REACHES_PAGE={any(contains(control, map_control) for control in page_controls)}")
-        print(f"WRAPPER_REACHES_PAGE={any(contains(control, self.dashboard_map_wrapper) for control in page_controls)}")
-        print(f"SELF_CONTENT_REACHES_PAGE={any(contains(control, self.content) for control in page_controls)}")
-        print(f"ROOT_ROW_REACHES_PAGE={any(contains(control, self.dashboard_root_row) for control in page_controls)}")
-        for index, control in enumerate(self.content.controls):
-            print(f"SELF_CONTENT_CONTROL_INDEX={index} TYPE={type(control).__name__} ID={id(control)}")
-        found_wrapper = any(contains(control, self.dashboard_map_wrapper) for control in self.content.controls)
-        print(f"MAP_SECTION_INDEX_IN_SELF_CONTENT={next((index for index, control in enumerate(self.content.controls) if contains(control, self.dashboard_map_wrapper)), -1)}")
-        print(f"WRAPPER_ID_EXPECTED={id(self.dashboard_map_wrapper)}")
-        print(f"WRAPPER_ID_FOUND_IN_TREE={id(self.dashboard_map_wrapper) if found_wrapper else None}")
 
     def dashboard_view(self):
         if self.user["perfil"] == "MOTORISTA":
@@ -663,44 +601,33 @@ class DeliveryApp:
                     "route_id": route_id,
                 })
             map_control = self._ensure_dashboard_map(dashboard_markers)
-            self.dashboard_map_wrapper = ft.Container(
-                content=map_control,
-                width=800,
-                height=360,
+            graph_panel = lambda chart: ft.Container(
+                chart,
+                width=360,
+                height=180,
+                padding=12,
+                border_radius=14,
+                bgcolor=ft.Colors.WHITE,
+                shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
             )
-            index_2_controls = []
-            if os.getenv("DASHBOARD_HIDE_INDEX_2") != "1":
-                index_2_controls = [
-                    ft.Text("DEBUG INDEX 2 START"),
-                    ft.Container(ft.Row([
-                        ft.Container(status_chart, expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
-                        ft.Container(driver_chart, expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
-                    ], wrap=True, spacing=12), padding=20),
-                    ft.Text("DEBUG INDEX 2 END"),
-                ]
-            index_3_controls = []
-            if os.getenv("DASHBOARD_HIDE_INDEX_3") != "1":
-                index_3_controls = [
-                    ft.Text("DEBUG INDEX 3 START"),
-                    ft.Container(ft.Row([
-                        ft.Container(vehicle_chart, expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
-                        ft.Container(evolution_chart, expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
-                    ], wrap=True, spacing=12), padding=20),
-                    ft.Text("DEBUG INDEX 3 END"),
-                ]
 
             self.content.controls = [
                 self.header_bar("Dashboard", "Indicadores e monitoramento operacional"),
                 ft.Container(ft.Row(cards, wrap=True, spacing=12), padding=20),
-                *index_2_controls,
-                *index_3_controls,
-                ft.Text("ATTACHED DASHBOARD CONTENT TEST"),
+                ft.Container(ft.Row([
+                    graph_panel(status_chart),
+                    graph_panel(driver_chart),
+                ], wrap=True, spacing=12), padding=20),
+                ft.Container(ft.Row([
+                    graph_panel(vehicle_chart),
+                    graph_panel(evolution_chart),
+                ], wrap=True, spacing=12), padding=20),
                 ft.Container(
                     ft.Column([
                         ft.Text("Monitoramento de motoristas", weight=ft.FontWeight.BOLD),
                         ft.Text("Clique em um marcador para abrir a tela de Rotas e selecionar o motorista."),
                         ft.Divider(height=10),
-                        self.dashboard_map_wrapper,
+                        map_control,
                     ]),
                     padding=20,
                     border_radius=14,
@@ -708,16 +635,13 @@ class DeliveryApp:
                     shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
                 ),
                 ft.Container(ft.Row([
-                    ft.Container(ft.Column([ft.Text("Últimas entregas", weight=ft.FontWeight.BOLD)] + (latest_deliveries or [ft.Text("Nenhuma entrega encontrada.")]), tight=True), expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
-                    ft.Container(ft.Column([ft.Text("Próximas rotas", weight=ft.FontWeight.BOLD)] + (next_routes or [ft.Text("Nenhuma rota agendada.")]), tight=True), expand=True, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                    ft.Container(ft.Column([ft.Text("Últimas entregas", weight=ft.FontWeight.BOLD)] + (latest_deliveries or [ft.Text("Nenhuma entrega encontrada.")]), tight=True), width=360, height=180, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
+                    ft.Container(ft.Column([ft.Text("Próximas rotas", weight=ft.FontWeight.BOLD)] + (next_routes or [ft.Text("Nenhuma rota agendada.")]), tight=True), width=360, height=180, padding=12, border_radius=14, bgcolor=ft.Colors.WHITE, shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12)),
                 ], wrap=True, spacing=12), padding=20),
             ]
             self.dashboard_initialized = True
             self.page.update()
             self.dashboard_screen_visible = True
-            if not self.dashboard_map_debug_logged:
-                self._log_dashboard_tree(map_control)
-                self.dashboard_map_debug_logged = True
         except ApiError as exc:
             self.notify(str(exc), True)
 

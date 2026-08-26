@@ -162,3 +162,58 @@ def test_dashboard_refresh_updates_data_without_rebuilding_visible_dashboard():
     dashboard_view.assert_not_called()
     app._update_dashboard_controls.assert_called_once_with({"entregas_hoje": 2})
     assert app.dashboard_data["entregas_hoje"] == 2
+
+
+def test_dashboard_graph_rows_use_finite_panel_dimensions_without_vertical_expand():
+    from unittest.mock import MagicMock
+    from app.application import DeliveryApp
+
+    app = DeliveryApp(MagicMock())
+    app.user = {"perfil": "ADMIN"}
+    app.api.request = MagicMock(return_value={})
+    app.dashboard_view()
+
+    graph_rows = app.content.controls[2:4]
+    assert len(graph_rows) == 2
+    for row_container in graph_rows:
+        assert isinstance(row_container, ft.Container)
+        assert isinstance(row_container.content, ft.Row)
+        assert row_container.content.wrap is True
+        assert all(
+            isinstance(panel, ft.Container)
+            and panel.width == 360
+            and panel.height == 180
+            for panel in row_container.content.controls
+        )
+        assert all(panel.expand is None for panel in row_container.content.controls)
+
+
+def test_dashboard_keeps_graphs_before_map_and_attached_text_removed():
+    from unittest.mock import MagicMock
+    from app.application import DeliveryApp
+
+    app = DeliveryApp(MagicMock())
+    app.user = {"perfil": "ADMIN"}
+    app.api.request = MagicMock(return_value={})
+    app.dashboard_view()
+
+    text_values = [control.value for control in app.content.controls if isinstance(control, ft.Text)]
+    assert "ATTACHED DASHBOARD CONTENT TEST" not in text_values
+    assert isinstance(app.content.controls[4], ft.Container)
+    assert app.map_control is app.content.controls[4].content.controls[-1]
+
+
+def test_dashboard_last_section_uses_finite_panels_without_expand():
+    from unittest.mock import MagicMock
+    from app.application import DeliveryApp
+
+    app = DeliveryApp(MagicMock())
+    app.user = {"perfil": "ADMIN"}
+    app.api.request = MagicMock(return_value={})
+    app.dashboard_view()
+
+    last_section = app.content.controls[5]
+    panels = last_section.content.controls
+    assert len(panels) == 2
+    assert all(panel.expand is None for panel in panels)
+    assert all(panel.width == 360 and panel.height == 180 for panel in panels)
