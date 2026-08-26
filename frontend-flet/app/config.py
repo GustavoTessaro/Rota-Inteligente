@@ -1,8 +1,18 @@
 import os
 from urllib.parse import urlsplit, urlunsplit
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
-MAPTILER_API_KEY = os.getenv("MAPTILER_API_KEY", "")
+try:
+    from .generated_config import BUILD_API_BASE_URL, BUILD_MAPTILER_API_KEY
+except ImportError:
+    BUILD_API_BASE_URL = None
+    BUILD_MAPTILER_API_KEY = None
+
+API_BASE_URL = (
+    BUILD_API_BASE_URL
+    or os.getenv("API_BASE_URL")
+    or "http://127.0.0.1:8000/api"
+)
+MAPTILER_API_KEY = BUILD_MAPTILER_API_KEY or os.getenv("MAPTILER_API_KEY") or ""
 
 
 def build_tracking_ws_url(api_base_url: str | None = None) -> str:

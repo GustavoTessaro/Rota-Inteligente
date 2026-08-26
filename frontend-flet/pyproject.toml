@@ -1,0 +1,9 @@
+[tool.flet.android]
+min_sdk_version = 23
+
+[tool.flet.android.permission]
+"android.permission.ACCESS_FINE_LOCATION" = true
+"android.permission.ACCESS_COARSE_LOCATION" = true
+
+[tool.flet.flutter.pubspec.dependency_overrides]
+webview_flutter_android = "4.10.0"

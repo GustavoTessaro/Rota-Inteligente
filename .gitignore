@@ -9,3 +9,8 @@ __pycache__/
 .flet/
 build/
 dist/
+site-packages/
+*.apk
+*.keystore
+*.jks
+frontend-flet/app/generated_config.py

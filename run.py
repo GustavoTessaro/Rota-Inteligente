@@ -84,6 +84,16 @@ def load_frontend_map_config() -> None:
     print("MAPTILER_API_KEY carregada = False")
 
 
+def load_frontend_runtime_config() -> None:
+    for config_path in (FRONTEND_DIR / ".env", BACKEND_ENV):
+        if not config_path.exists():
+            continue
+        for line in config_path.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() in {"API_BASE_URL", "MAPTILER_API_KEY"}:
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def start_process(command: list[str], cwd: Path, title: str) -> subprocess.Popen:
     print(f"Starting {title}: {' '.join(command)}")
     creationflags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
@@ -98,6 +108,7 @@ def start_process(command: list[str], cwd: Path, title: str) -> subprocess.Popen
 if __name__ == "__main__":
     try:
         ensure_backend_env()
+        load_frontend_runtime_config()
         load_frontend_map_config()
 
         ensure_venv(BACKEND_VENV)
@@ -111,6 +122,10 @@ if __name__ == "__main__":
             "-m",
             "uvicorn",
             "app.main:app",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8000",
             "--reload",
             "--reload-dir",
             "app",

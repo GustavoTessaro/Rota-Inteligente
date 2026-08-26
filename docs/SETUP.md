@@ -72,7 +72,29 @@ A API ficará disponível em:
 - http://localhost:8000/docs
 - http://localhost:8000/health
 
-## 7. Executar o frontend Flet
+## 7. Configuracao do frontend
+
+Para desktop, use um arquivo local `frontend-flet/.env`:
+
+```env
+API_BASE_URL=http://127.0.0.1:8000/api
+MAPTILER_API_KEY=
+```
+
+Para um build Android de desenvolvimento, gere uma configuracao local com o
+IP LAN da maquina, sem gravar o valor no Git:
+
+```powershell
+$env:MAPTILER_API_KEY="sua-chave-publica-restrita"
+python tools/prepare_android_build.py --api-base-url "http://<IP_LAN>:8000/api"
+```
+
+O arquivo gerado e `frontend-flet/app/generated_config.py` e e ignorado pelo
+Git. Em producao, use uma URL HTTPS publica; a URL WSS do tracking e derivada
+automaticamente. A chave MapTiler do cliente deve ser publica/restrita e nao
+deve ser confundida com segredos do servidor.
+
+## 8. Executar o frontend Flet
 
 Em outro terminal:
 
