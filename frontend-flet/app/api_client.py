@@ -45,3 +45,6 @@ class ApiClient:
         data = self.request("POST", "/auth/login", json={"email": email, "senha": password})
         self.token = data["token"]
         return data["usuario"]
+
+    def publish_route_position(self, route_id: int, payload: dict):
+        return self.request("POST", f"/rotas/{route_id}/posicoes", json=payload)

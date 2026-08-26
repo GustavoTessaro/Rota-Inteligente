@@ -18,6 +18,8 @@ except Exception:  # pragma: no cover - optional dependency during import
 from .api_client import ApiClient, ApiError
 from .config import MAPTILER_API_KEY, build_tracking_ws_url
 from .dashboard_utils import DASHBOARD_INDICATORS, DashboardRefreshController, get_dashboard_indicator_values
+from .driver_location_tracking import DriverLocationTracking
+from .geolocation_provider import GeolocationPermissionDenied, GeolocationProvider, GeolocationServiceUnavailable
 from .map_view import MapView
 from .tracking_client import build_marker, update_vehicle_state
 
@@ -40,6 +42,14 @@ class DeliveryApp:
     def __init__(self, page: ft.Page):
         self.page = page
         self.api = ApiClient()
+        self.geolocation_provider = GeolocationProvider()
+        self.driver_location_tracking = DriverLocationTracking(
+            self.geolocation_provider.get_position,
+            self.api.publish_route_position,
+            interval=15.0,
+            on_error=self._handle_driver_tracking_error,
+        )
+        self.gps_tracking_state = "inativo"
         self.user = None
         self.websocket_client = None
         self._tracking_thread = None
@@ -240,6 +250,58 @@ class DeliveryApp:
         if self._tracking_stop_event is not None and self._tracking_loop is not None:
             self._tracking_loop.call_soon_threadsafe(self._tracking_stop_event.set)
         self._set_connection_state("desconectado")
+
+    def _sync_driver_tracking(self, route):
+        if not self.user or self.user.get("perfil") != "MOTORISTA":
+            return
+        if not route or route.get("status") != "EM_EXECUCAO":
+            self.driver_location_tracking.stop()
+            self._set_gps_tracking_state("inativo")
+            return
+        vehicle = route.get("veiculo") or {}
+        vehicle_id = route.get("veiculo_id") or vehicle.get("id")
+        try:
+            self.driver_location_tracking.start(route.get("id"), route.get("status"), vehicle_id)
+            self._set_gps_tracking_state("gps_ativo")
+        except GeolocationPermissionDenied:
+            self._set_gps_tracking_state("aguardando_permissao")
+        except GeolocationServiceUnavailable:
+            self._set_gps_tracking_state("localizacao_indisponivel")
+        except ValueError:
+            self._set_gps_tracking_state("inativo")
+
+    def _stop_driver_tracking(self):
+        if getattr(self, "driver_location_tracking", None) is not None:
+            self.driver_location_tracking.stop()
+        self._set_gps_tracking_state("inativo")
+
+    def _handle_driver_tracking_error(self, error):
+        if isinstance(error, GeolocationPermissionDenied):
+            self._set_gps_tracking_state("aguardando_permissao")
+        elif isinstance(error, GeolocationServiceUnavailable):
+            self._set_gps_tracking_state("localizacao_indisponivel")
+        else:
+            self._set_gps_tracking_state("erro_temporario")
+
+    def _set_gps_tracking_state(self, state):
+        self.gps_tracking_state = state
+        status_text = getattr(self, "gps_status_text", None)
+        if status_text is not None:
+            status_text.value = self._gps_status_label(state)
+            try:
+                status_text.update()
+            except AssertionError:
+                pass
+
+    @staticmethod
+    def _gps_status_label(state):
+        return {
+            "gps_ativo": "GPS ativo",
+            "aguardando_permissao": "Aguardando permissão de localização",
+            "localizacao_indisponivel": "Localização indisponível",
+            "erro_temporario": "Erro temporário no envio da localização",
+            "inativo": "GPS inativo",
+        }.get(state, "GPS inativo")
 
     def notify(self, message: str, error=False):
         color = ft.Colors.RED_700 if error else ft.Colors.GREEN_700
@@ -447,6 +509,9 @@ class DeliveryApp:
             ],
         )
         self._connect_tracking_socket()
+        if driver and self.geolocation_provider.control not in self.page.overlay:
+            self.page.overlay.append(self.geolocation_provider.control)
+        self.page.on_disconnect = lambda _: self._stop_driver_tracking()
         self.page.add(ft.Row([rail, ft.VerticalDivider(width=1), self.content], expand=True))
         self.dashboard_active = True
         self.dashboard_screen_visible = True
@@ -454,6 +519,7 @@ class DeliveryApp:
         self.dashboard_view()
 
     def logout(self):
+        self._stop_driver_tracking()
         self.api.token = None
         self.user = None
         self.dashboard_active = False
@@ -999,6 +1065,7 @@ class DeliveryApp:
                 route = self.api.request("GET", f"/rotas/{route_id}")
 
             if not route:
+                self._stop_driver_tracking()
                 self.notify("Nenhuma rota ativa encontrada.", True)
                 return
 
@@ -1008,6 +1075,7 @@ class DeliveryApp:
             stops = self._driver_route_snapshot(route)
             next_stop = self._next_driver_stop(route)
             route_status = route.get("status", "PRONTA")
+            self._sync_driver_tracking(route)
 
             cliente_nome = None
             endereco = None
@@ -1175,6 +1243,11 @@ class DeliveryApp:
                 origin_text = "Origem não informada"
 
             current_destination = self._format_driver_address(endereco) if endereco else "Destino não informado"
+            self.gps_status_text = ft.Text(
+                self._gps_status_label(self.gps_tracking_state),
+                size=12,
+                color=ft.Colors.GREY_700,
+            )
 
             self.content.controls = [
                 self.header_bar("Rota Ativa", f"#{route.get('id')} · {route.get('nome', 'Rota')}", actions=[
@@ -1192,6 +1265,7 @@ class DeliveryApp:
                                 ft.Text(route_status.replace("_", " "), size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.INDIGO),
                             ]),
                         ], spacing=24),
+                        self.gps_status_text,
                         ft.Text(f"Origem: {origin_text}", size=11, color=ft.Colors.GREY_700, selectable=True),
                         ft.Text(f"Destino atual: {current_destination}", size=11, color=ft.Colors.GREY_700, selectable=True),
                         ft.Divider(height=12),
@@ -2510,6 +2584,11 @@ class DeliveryApp:
                 payload["progresso_percentual"] = max(0, min(100, int(progress)))
             self.api.request("PATCH", f"/rotas/{route['id']}/status", json=payload)
             self.notify("Status da rota atualizado.")
+            if self.user.get("perfil") == "MOTORISTA":
+                if new_status == "EM_EXECUCAO":
+                    self._sync_driver_tracking({**route, "status": new_status})
+                else:
+                    self._sync_driver_tracking({**route, "status": new_status})
             # Se called from driver_route_view, recarrega a tela; caso contrário, volta para rotas_view
             if stay_in_view:
                 self.driver_route_view(route.get("id"), loading_confirmed=False)
