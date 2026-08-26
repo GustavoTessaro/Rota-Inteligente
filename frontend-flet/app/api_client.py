@@ -19,11 +19,15 @@ class ApiClient:
         try:
             response = self.client.request(method, path, headers=headers, **kwargs)
         except httpx.RequestError as exc:
+            if method == "POST" and "/posicoes" in path:
+                print(f"[TRACKING_HTTP] HTTP_REQUEST_FAILED status=sem resposta body={exc!r}")
             print(f"API ERROR -> {method} {path}")
             print(f"STATUS -> {'sem resposta'}")
             print(f"BODY -> {exc}")
             raise ApiError("Não foi possível conectar à API.") from exc
         if response.status_code >= 400:
+            if method == "POST" and "/posicoes" in path:
+                print(f"[TRACKING_HTTP] HTTP_REQUEST_FAILED status={response.status_code} body={response.text}")
             print(f"API ERROR -> {method} {path}")
             print(f"STATUS -> {response.status_code}")
             print(f"BODY -> {response.text}")
@@ -39,6 +43,8 @@ class ApiClient:
                     messages.append(f"{field}: {message}" if field else message)
                 detail = "; ".join(messages)
             raise ApiError(str(detail))
+        if method == "POST" and "/posicoes" in path:
+            print(f"[TRACKING_HTTP] HTTP_REQUEST_SUCCESS status={response.status_code}")
         return response.json() if response.content else None
 
     def login(self, email: str, password: str):
@@ -47,4 +53,9 @@ class ApiClient:
         return data["usuario"]
 
     def publish_route_position(self, route_id: int, payload: dict):
-        return self.request("POST", f"/rotas/{route_id}/posicoes", json=payload)
+        print(f"[TRACKING_HTTP] HTTP_REQUEST_STARTED POST /api/rotas/{route_id}/posicoes")
+        try:
+            result = self.request("POST", f"/rotas/{route_id}/posicoes", json=payload)
+            return result
+        except ApiError as exc:
+            raise

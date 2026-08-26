@@ -62,6 +62,7 @@ class DriverLocationTracking:
             self._active = True
             self._thread = Thread(target=self._run, daemon=True)
             self._thread.start()
+            print(f"[TRACKING] thread iniciada rota={route_id}")
         return True
 
     def stop(self) -> None:
@@ -79,6 +80,10 @@ class DriverLocationTracking:
 
     def publish_sample(self, sample: LocationSample | None) -> bool:
         if not self.active or self.route_id is None or not self._is_valid(sample):
+            if sample is not None and sample.accuracy is not None:
+                print(f"[TRACKING] POSITION_VALIDATION_REJECTED accuracy={sample.accuracy}")
+            elif sample is not None:
+                print("[TRACKING] POSITION_VALIDATION_REJECTED accuracy=None")
             return False
         values = asdict(sample)
         timestamp = values.pop("timestamp")
@@ -99,8 +104,11 @@ class DriverLocationTracking:
         }
         payload.update({key: value for key, value in optional_fields.items() if value is not None})
         try:
+            print(f"[TRACKING] enviando posição rota={self.route_id}")
             self.publish_position(self.route_id, payload)
+            print(f"[TRACKING] posição enviada com sucesso rota={self.route_id}")
         except Exception as exc:
+            print(f"[TRACKING] erro ao obter/enviar posição: {exc!r}")
             if self.on_error is not None:
                 self.on_error(exc)
             return False
@@ -111,6 +119,7 @@ class DriverLocationTracking:
             try:
                 self.publish_sample(self.location_provider())
             except Exception as exc:
+                print(f"[TRACKING] erro ao obter/enviar posição: {exc!r}")
                 if self.on_error is not None:
                     self.on_error(exc)
             self._stop_event.wait(self.interval)

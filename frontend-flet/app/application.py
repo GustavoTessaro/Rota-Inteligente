@@ -204,6 +204,7 @@ class DeliveryApp:
                                     try:
                                         data = json.loads(raw_message)
                                     except Exception:
+                                        print("[TRACKING_ADMIN] mensagem ignorada motivo=json inválido")
                                         continue
                                     self.vehicle_states = update_vehicle_state(self.vehicle_states, data)
                                     self._refresh_map_markers()

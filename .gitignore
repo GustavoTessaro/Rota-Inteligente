@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 .venv-android-build/
+.venv-android-build-0273/
 .env
 *.db
 .flet/

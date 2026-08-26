@@ -21,6 +21,7 @@ class GeolocationProvider:
         self.control = geolocator or geolocator_api.Geolocator()
 
     def get_position(self) -> LocationSample | None:
+        print("[TRACKING] solicitando posição GPS")
         if not self.control.is_location_service_enabled():
             raise GeolocationServiceUnavailable("serviço de localização desabilitado")
 
@@ -34,7 +35,13 @@ class GeolocationProvider:
             accuracy=geolocator_api.GeolocatorPositionAccuracy.HIGH
         )
         if position is None or position.latitude is None or position.longitude is None:
+            print("[TRACKING] GPS_ACQUISITION_SUCCESS=false posição vazia")
             return None
+        print(
+            "[TRACKING] GPS_ACQUISITION_SUCCESS=true "
+            f"posição obtida lat={position.latitude} lon={position.longitude} "
+            f"accuracy={position.accuracy}"
+        )
         return LocationSample(
             latitude=position.latitude,
             longitude=position.longitude,

@@ -900,15 +900,21 @@ async def create_route_position(
     db: Session = Depends(get_db),
     user: Usuario = Depends(current_user),
 ):
+    print(f"[TRACKING_BACKEND] request recebido rota={rota_id} motorista={user.id}")
     if user.perfil != Perfil.MOTORISTA:
+        print("[TRACKING_BACKEND] rejeitado: usuário não é MOTORISTA")
         raise HTTPException(403, "Somente motoristas podem publicar posições")
     rota = get_or_404(db, Rota, rota_id)
+    print(f"[TRACKING_BACKEND] rota status={rota.status.value} veiculo={rota.veiculo_id}")
     ensure_route_access_scope(user, rota)
     if rota.motorista_id != user.id:
+        print("[TRACKING_BACKEND] rejeitado: motorista não pertence à rota")
         raise HTTPException(403, "A rota não pertence ao motorista autenticado")
     if rota.status != StatusRota.EM_EXECUCAO:
+        print("[TRACKING_BACKEND] rejeitado: rota não está EM_EXECUCAO")
         raise HTTPException(422, "Posições só podem ser publicadas em rota EM_EXECUCAO")
     if rota.veiculo_id is None:
+        print("[TRACKING_BACKEND] rejeitado: veículo ausente")
         raise HTTPException(422, "A rota precisa possuir veículo atribuído")
 
     if data.veiculo_id is not None:
@@ -941,8 +947,11 @@ async def create_route_position(
     db.add(posicao)
     commit(db)
     db.refresh(posicao)
+    print(f"[TRACKING_BACKEND] posição persistida id={posicao.id}")
     payload = jsonable_encoder(RotaPosicaoOut.model_validate(posicao))
+    print(f"[TRACKING_BACKEND] broadcast iniciado organizacao={rota.organizacao_id}")
     await manager.broadcast({"type": "rota_posicao", "payload": payload}, rota.organizacao_id)
+    print("[TRACKING_BACKEND] broadcast concluído")
     return posicao
 
 
