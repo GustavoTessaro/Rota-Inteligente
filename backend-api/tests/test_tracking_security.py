@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.main import app
-from app.models import Endereco, Entrega, Organizacao, Perfil, Pedido, Rota, RotaEntrega, StatusEntrega, StatusRota, Usuario, Veiculo
+from app.models import Endereco, Entrega, Organizacao, Perfil, Pedido, Rota, RotaEntrega, RotaPosicao, StatusEntrega, StatusRota, Usuario, Veiculo
 from app.security import create_token
 from app.tracking import manager
 
@@ -124,6 +124,27 @@ def test_manager_broadcast_is_scoped_by_organization():
     assert getattr(manager_b.websocket, "sent", 0) == 0
 
 
+def test_broadcast_reaches_admin_and_matching_manager_only():
+    class Socket:
+        def __init__(self):
+            self.messages = []
+
+        async def send_json(self, message):
+            self.messages.append(message)
+
+    admin = type("Connection", (), {"websocket": Socket(), "perfil": Perfil.ADMIN, "organizacao_id": None})()
+    manager_a = type("Connection", (), {"websocket": Socket(), "perfil": Perfil.GESTOR, "organizacao_id": 3})()
+    manager_b = type("Connection", (), {"websocket": Socket(), "perfil": Perfil.GESTOR, "organizacao_id": 2})()
+    message = {"type": "rota_posicao", "payload": {"rota_id": 10, "motorista_id": 4, "veiculo_id": 1}}
+    manager.active_connections.extend([admin, manager_a, manager_b])
+
+    asyncio.run(manager.broadcast(message, organization_id=3))
+
+    assert admin.websocket.messages == [message]
+    assert manager_a.websocket.messages == [message]
+    assert manager_b.websocket.messages == []
+
+
 @pytest.mark.parametrize("status", [StatusRota.PRONTA, StatusRota.PAUSADA, StatusRota.FINALIZADA, StatusRota.CANCELADA])
 def test_driver_cannot_publish_position_outside_execution(client: TestClient, status):
     driver = _user("motorista1@sistema.com")
@@ -147,6 +168,24 @@ def test_driver_cannot_publish_with_forged_identity_or_vehicle(client: TestClien
     assert response.status_code in {403, 422}
     response = client.post(f"/api/rotas/{route_id}/posicoes", headers=_headers(driver), json=_position(route_id, driver.id, vehicle_id, veiculo_id=999999))
     assert response.status_code in {403, 404, 422}
+    with SessionLocal() as db:
+        assert db.query(RotaPosicao).filter(RotaPosicao.rota_id == route_id).count() == 0
+
+
+def test_driver_cannot_publish_on_another_drivers_route(client: TestClient):
+    driver = _user("motorista1@sistema.com")
+    other_driver = _user("motorista2@sistema.com")
+    route_id, _, vehicle_id = _route_for(other_driver)
+
+    response = client.post(
+        f"/api/rotas/{route_id}/posicoes",
+        headers=_headers(driver),
+        json=_position(route_id, driver.id, vehicle_id),
+    )
+
+    assert response.status_code == 403
+    with SessionLocal() as db:
+        assert db.query(RotaPosicao).filter(RotaPosicao.rota_id == route_id).count() == 0
 
 
 def test_manager_and_admin_cannot_publish_position(client: TestClient):
