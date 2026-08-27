@@ -147,13 +147,14 @@ def test_driver_gps_status_labels_are_safe_for_ui():
 
 def test_invalid_coordinates_and_accuracy_are_discarded():
     published = []
-    service = DriverLocationTracking(lambda: sample(), lambda route_id, payload: published.append(payload), interval=60)
+    service = DriverLocationTracking(lambda: None, lambda route_id, payload: published.append(payload), interval=60)
     service.start(7, "EM_EXECUCAO", 1)
 
     service.publish_sample(sample(latitude=91))
     service.publish_sample(sample(longitude=-181))
     service.publish_sample(sample(accuracy=None))
     service.publish_sample(sample(accuracy=101))
+    service.stop()
 
     assert published == []
 
@@ -179,7 +180,7 @@ def test_network_error_does_not_stop_active_service():
 def test_network_error_notifies_without_deactivating_service():
     errors = []
     service = DriverLocationTracking(
-        lambda: sample(),
+        lambda: None,
         lambda route_id, payload: (_ for _ in ()).throw(RuntimeError("offline")),
         interval=60,
         on_error=errors.append,

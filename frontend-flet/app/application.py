@@ -119,6 +119,8 @@ class DeliveryApp:
 
     def _set_connection_state(self, state: str):
         self.websocket_state = state
+        if getattr(self, "user", None) is not None and self.user.get("perfil") == "MOTORISTA":
+            return
         if self.connection_indicator is not None:
             self.connection_indicator.content = ft.Text(
                 {
@@ -136,6 +138,14 @@ class DeliveryApp:
                 self.page.update()
             except Exception:
                 pass
+
+    def _connection_indicator_text(self):
+        if getattr(self, "user", None) is not None and self.user.get("perfil") == "MOTORISTA":
+            return ft.Text(
+                self._gps_status_label(self.gps_tracking_state),
+                color=ft.Colors.GREEN if self.gps_tracking_state == "gps_ativo" else ft.Colors.RED,
+            )
+        return ft.Text("● Desconectado", color=ft.Colors.RED)
 
     def _refresh_map_markers(self):
         if not getattr(self, "map_control", None):
@@ -318,6 +328,12 @@ class DeliveryApp:
 
     def _set_gps_tracking_state(self, state):
         self.gps_tracking_state = state
+        if (
+            getattr(self, "user", None) is not None
+            and self.user.get("perfil") == "MOTORISTA"
+            and getattr(self, "connection_indicator", None) is not None
+        ):
+            self.connection_indicator.content = self._connection_indicator_text()
         status_text = getattr(self, "gps_status_text", None)
         if status_text is not None:
             status_text.value = self._gps_status_label(state)
@@ -338,12 +354,6 @@ class DeliveryApp:
 
     def notify(self, message: str, error=False):
         color = ft.Colors.RED_700 if error else ft.Colors.GREEN_700
-
-        # debug log para terminal do flet
-        try:
-            print(f"[notify] message={message!r} error={error}")
-        except Exception:
-            pass
 
         if error:
             def _close(_):
@@ -530,7 +540,7 @@ class DeliveryApp:
         self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
         self.page.vertical_alignment = ft.MainAxisAlignment.START
         self.connection_indicator = ft.Container(
-            content=ft.Text("● Desconectado", color=ft.Colors.RED),
+            content=self._connection_indicator_text(),
             padding=12,
         )
         self.page.appbar = ft.AppBar(
