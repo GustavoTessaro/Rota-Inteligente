@@ -94,6 +94,12 @@ Git. Em producao, use uma URL HTTPS publica; a URL WSS do tracking e derivada
 automaticamente. A chave MapTiler do cliente deve ser publica/restrita e nao
 deve ser confundida com segredos do servidor.
 
+No Android, o `frontend-flet/pyproject.toml` declara a permissao `INTERNET` e
+habilita `usesCleartextTraffic=true` para desenvolvimento e homologacao na
+LAN. Essa configuracao permite a API HTTP local, como
+`http://<IP_LAN>:8000`. Em producao, prefira HTTPS para a API e WSS para o
+tracking, sem depender de cleartext.
+
 ## 8. Executar o frontend Flet
 
 Em outro terminal:
