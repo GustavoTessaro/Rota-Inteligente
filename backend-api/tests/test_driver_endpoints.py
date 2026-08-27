@@ -5,12 +5,24 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import Endereco, Organizacao, Pedido, Rota, RotaEntrega, StatusRota, Usuario, Perfil
+from route_alternative_helpers import select_alternative
 
 
 def _login(client: TestClient, email: str, password: str = "123456") -> dict:
     response = client.post("/api/auth/login", json={"email": email, "senha": password})
     assert response.status_code == 200, response.text
     return {"Authorization": f'Bearer {response.json()["token"]}'}
+
+
+def _select_route_alternative(client: TestClient, route: dict, driver_headers: dict) -> dict:
+    alternative = route["alternativas"][0]
+    response = client.post(
+        f"/api/rotas/{route['id']}/selecionar-alternativa",
+        headers=driver_headers,
+        json={"alternativa_id": alternative["id"]},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
 
 
 def _seed_possibly_unassigned_driver(client: TestClient, admin_headers: dict, name: str, email: str) -> Usuario:
@@ -126,12 +138,19 @@ def test_get_motorista_rota_atual_returns_active_route(client: TestClient, admin
             "organizacao_id": org["id"],
             "motorista_id": driver["id"],
             "veiculo_id": None,
-            "status": "EM_EXECUCAO",
+            "status": "PRONTA",
             "pedido_ids": [selected["pedido_id"]],
             "pontos_coleta_ids": [org["id"]],
         },
     )
     assert route_response.status_code == 201, route_response.text
+    route = select_alternative(client, route_response.json())
+    assert client.patch(f"/api/rotas/{route['id']}/confirmar-carga", headers=driver_headers).status_code == 200
+    assert client.patch(
+        f"/api/rotas/{route['id']}/status",
+        headers=driver_headers,
+        json={"status": "EM_EXECUCAO", "evento": "PARTIDA"},
+    ).status_code == 200
 
     response = client.get("/api/rotas/motorista/atual", headers=driver_headers)
     assert response.status_code == 200, response.text
@@ -265,6 +284,7 @@ def test_driver_can_start_own_route(client: TestClient, admin_headers: dict) -> 
     )
     assert route_response.status_code == 201, route_response.text
     route_id = route_response.json()["id"]
+    _select_route_alternative(client, route_response.json(), driver_headers)
 
     confirm_response = client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=driver_headers)
     assert confirm_response.status_code == 200, confirm_response.text
@@ -306,6 +326,7 @@ def test_route_start_requires_loading_confirmation(client: TestClient, admin_hea
     )
     assert route_response.status_code == 201, route_response.text
     route_id = route_response.json()["id"]
+    _select_route_alternative(client, route_response.json(), driver_headers)
 
     response = client.patch(
         f"/api/rotas/{route_id}/status",
@@ -342,6 +363,7 @@ def test_route_start_confirms_and_marks_pending_deliveries_as_em_rota(client: Te
     )
     assert route_response.status_code == 201, route_response.text
     route_id = route_response.json()["id"]
+    _select_route_alternative(client, route_response.json(), driver_headers)
 
     confirm_response = client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=driver_headers)
     assert confirm_response.status_code == 200, confirm_response.text
@@ -390,12 +412,19 @@ def test_get_motorista_rota_atual_prefers_em_execucao_over_other_statuses(client
             "organizacao_id": org["id"],
             "motorista_id": driver["id"],
             "veiculo_id": None,
-            "status": "EM_EXECUCAO",
+            "status": "PRONTA",
             "pedido_ids": [chosen[1]["pedido_id"]],
             "pontos_coleta_ids": [org["id"]],
         },
     )
     assert first.status_code == 201 and second.status_code == 201, (first.text, second.text)
+    second_route = _select_route_alternative(client, second.json(), driver_headers)
+    assert client.patch(f"/api/rotas/{second_route['id']}/confirmar-carga", headers=driver_headers).status_code == 200
+    assert client.patch(
+        f"/api/rotas/{second_route['id']}/status",
+        headers=driver_headers,
+        json={"status": "EM_EXECUCAO", "evento": "PARTIDA"},
+    ).status_code == 200
 
     response = client.get("/api/rotas/motorista/atual", headers=driver_headers)
     assert response.status_code == 200, response.text
@@ -426,6 +455,13 @@ def test_route_progress_and_finalization_after_last_delivery(client: TestClient,
         },
     )
     assert route_response.status_code == 201, route_response.text
+    route = _select_route_alternative(client, route_response.json(), driver_headers)
+    assert client.patch(f"/api/rotas/{route['id']}/confirmar-carga", headers=driver_headers).status_code == 200
+    assert client.patch(
+        f"/api/rotas/{route['id']}/status",
+        headers=driver_headers,
+        json={"status": "EM_EXECUCAO", "evento": "PARTIDA"},
+    ).status_code == 200
     route_id = route_response.json()["id"]
 
     confirm_response = client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=driver_headers)
@@ -517,6 +553,7 @@ def test_driver_route_next_delivery_skips_not_delivered_and_is_stable_after_relo
     )
     assert route_response.status_code == 201, route_response.text
     route_id = route_response.json()["id"]
+    _select_route_alternative(client, route_response.json(), driver_headers)
     assert client.patch(f"/api/rotas/{route_id}/confirmar-carga", headers=driver_headers).status_code == 200
     assert client.patch(
         f"/api/rotas/{route_id}/status",
@@ -577,6 +614,7 @@ def test_driver_route_next_delivery_follows_optimized_sequence_through_completio
     )
     assert route_response.status_code == 201, route_response.text
     route_id = route_response.json()["id"]
+    _select_route_alternative(client, route_response.json(), driver_headers)
 
     with SessionLocal() as db:
         route = db.get(Rota, route_id)

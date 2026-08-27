@@ -128,7 +128,7 @@ class GoogleRouteOptimizationService:
         token = self._get_access_token()
         if not token or not self.project_id:
             raise RuntimeError("Google Route Optimization requires a project and service account")
-        coefficient = {"costPerHour": 1.0} if objective == "MAIS_RAPIDA" else {"costPerKilometer": 1.0}
+        coefficient = {"costPerTraveledHour": 1.0} if objective == "MAIS_RAPIDA" else {"costPerKilometer": 1.0}
         now = datetime.now(timezone.utc).replace(microsecond=0)
         body = {
             "model": {

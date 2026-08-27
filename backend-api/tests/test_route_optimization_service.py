@@ -148,7 +148,7 @@ def test_optimize_tours_handles_five_waypoints_and_preserves_evaluation_bundle(m
     assert result["distance_meters"] == 10000
     assert result["duration_seconds"] == 1215
     assert result["encoded_polyline"] == "bundle"
-    assert requests[0]["model"]["vehicles"][0]["costPerHour"] == 1.0
+    assert requests[0]["model"]["vehicles"][0]["costPerTraveledHour"] == 1.0
     assert "costPerKilometer" not in requests[0]["model"]["vehicles"][0]
 
 

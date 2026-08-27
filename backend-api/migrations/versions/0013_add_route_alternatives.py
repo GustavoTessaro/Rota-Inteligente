@@ -1,15 +1,15 @@
 """add persisted route alternatives and driver selection
 
-Revision ID: 0006_add_route_alternatives
-Revises: 0005_add_address_geolocation
+Revision ID: 0013_add_route_alternatives
+Revises: 0012_align_schema_with_current_models
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0006_add_route_alternatives"
-down_revision = "0005_add_address_geolocation"
+revision = "0013_add_route_alternatives"
+down_revision = "0012_align_schema_with_current_models"
 branch_labels = None
 depends_on = None
 
@@ -21,6 +21,7 @@ def upgrade():
         op.execute("ALTER TYPE tipoeventorota ADD VALUE IF NOT EXISTS 'ALTERNATIVA_SELECIONADA'")
     elif bind.dialect.name == "mysql":
         op.execute("ALTER TABLE rota_historico MODIFY evento ENUM('PARTIDA','PAUSA','RETOMADA','ABASTECIMENTO','DESVIO','MANUTENCAO','ENTREGA_REALIZADA','ENTREGA_FALHOU','FINALIZADA','CANCELAMENTO','ALTERNATIVA_RECOMENDADA','ALTERNATIVA_SELECIONADA') NOT NULL")
+
     criterio = sa.Enum("MAIS_RAPIDA", "MAIS_CURTA", name="criterioalternativarota")
     op.create_table(
         "rota_alternativas",
@@ -36,6 +37,7 @@ def upgrade():
         sa.UniqueConstraint("rota_id", "criterio", name="uq_rota_alternativas_rota_criterio"),
     )
     op.create_index("ix_rota_alternativas_rota_id", "rota_alternativas", ["rota_id"])
+
     with op.batch_alter_table("rotas") as batch:
         batch.add_column(sa.Column("alternativa_recomendada_id", sa.Integer(), nullable=True))
         batch.add_column(sa.Column("alternativa_escolhida_id", sa.Integer(), nullable=True))

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.database import SessionLocal
 from app.models import Endereco, Organizacao, Pedido, Rota, RotaPosicao
+from route_alternative_helpers import select_alternative
 
 
 def _login(client: TestClient, email: str, password: str = "123456") -> dict:
@@ -76,8 +77,10 @@ def test_route_uses_organization_principal_address_and_persists_metrics(client: 
     route = response.json()
     assert route["organizacao_id"] == org.id
     assert route["origem_endereco_id"] == address.id
-    assert route["distancia_prevista"] > 0
-    assert route["duracao_prevista"] > 0
+    assert route["distancia_prevista"] == 0
+    assert route["duracao_prevista"] == 0
+    assert all(item["distancia_prevista"] > 0 for item in route["alternativas"])
+    assert all(item["duracao_prevista"] > 0 for item in route["alternativas"])
 
 
 def test_route_rejects_mixed_organizations(client: TestClient, admin_headers: dict) -> None:
@@ -198,6 +201,7 @@ def test_route_lifecycle_and_tracking_integration(client: TestClient, admin_head
     assert route["veiculo_id"] == vehicle["id"]
     assert route["motorista_id"] == driver["id"]
     assert route["entregas"][0]["entrega_id"] == delivery["id"]
+    route = select_alternative(client, route)
 
     list_response = client.get("/api/rotas?limit=10&offset=0", headers=admin_headers)
     assert list_response.status_code == 200
@@ -288,6 +292,7 @@ def test_route_can_be_paused_and_resumed_with_progress(client: TestClient, admin
     )
     assert create_response.status_code == 201
     route = create_response.json()
+    route = select_alternative(client, route)
 
     confirm_response = client.patch(
         f"/api/rotas/{route['id']}/confirmar-carga",
@@ -444,7 +449,7 @@ def test_driver_can_complete_current_delivery_and_advance_progress(client: TestC
             "organizacao_id": organizations[0]["id"],
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
-            "status": "EM_EXECUCAO",
+            "status": "PRONTA",
             "progresso_percentual": 0,
             "pedido_ids": [valid_deliveries[0]["pedido_id"], valid_deliveries[1]["pedido_id"]],
             "pontos_coleta_ids": [organizations[0]["id"]],
@@ -452,6 +457,7 @@ def test_driver_can_complete_current_delivery_and_advance_progress(client: TestC
     )
     assert route_response.status_code == 201
     route = route_response.json()
+    route = select_alternative(client, route)
 
     confirm_response = client.patch(
         f"/api/rotas/{route['id']}/confirmar-carga",
@@ -515,7 +521,7 @@ def test_route_finalizes_after_all_deliveries_complete(client: TestClient, admin
             "organizacao_id": organizations[0]["id"],
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
-            "status": "EM_EXECUCAO",
+            "status": "PRONTA",
             "progresso_percentual": 95,
             "pedido_ids": [valid_deliveries[0]["pedido_id"]],
             "pontos_coleta_ids": [organizations[0]["id"]],
@@ -523,6 +529,13 @@ def test_route_finalizes_after_all_deliveries_complete(client: TestClient, admin
     )
     assert route_response.status_code == 201
     route = route_response.json()
+    route = select_alternative(client, route)
+    assert client.patch(f"/api/rotas/{route['id']}/confirmar-carga", headers=admin_headers).status_code == 200
+    assert client.patch(
+        f"/api/rotas/{route['id']}/status",
+        headers=admin_headers,
+        json={"status": "EM_EXECUCAO", "evento": "PARTIDA"},
+    ).status_code == 200
 
     client.post(
         f"/api/entregas/{valid_deliveries[0]['id']}/comprovante",
@@ -560,12 +573,20 @@ def test_current_backend_does_not_enforce_sequential_delivery_guard(client: Test
             "organizacao_id": organizations[0]["id"],
             "veiculo_id": vehicle["id"],
             "motorista_id": driver["id"],
-            "status": "EM_EXECUCAO",
+            "status": "PRONTA",
             "pedido_ids": [valid_deliveries[0]["pedido_id"], valid_deliveries[1]["pedido_id"]],
             "pontos_coleta_ids": [organizations[0]["id"]],
         },
     )
     assert route_response.status_code == 201
+    route = route_response.json()
+    route = select_alternative(client, route)
+    assert client.patch(f"/api/rotas/{route['id']}/confirmar-carga", headers=admin_headers).status_code == 200
+    assert client.patch(
+        f"/api/rotas/{route['id']}/status",
+        headers=admin_headers,
+        json={"status": "EM_EXECUCAO", "evento": "PARTIDA"},
+    ).status_code == 200
 
     client.post(
         f"/api/entregas/{valid_deliveries[1]['id']}/comprovante",
