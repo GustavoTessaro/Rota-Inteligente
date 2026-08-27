@@ -1,6 +1,6 @@
-from itertools import permutations
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 import time
 import httpx
@@ -24,11 +24,14 @@ class GoogleRouteOptimizationService:
     """
 
     OFFICIAL_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+    OPTIMIZE_TOURS_URL = "https://routeoptimization.googleapis.com/v1/projects/{project_id}/locations/{location}:optimizeTours"
 
     def __init__(self, service_account_file: Optional[str] = None, endpoint: Optional[str] = None):
         settings = get_settings()
         self.sa_file = service_account_file or settings.google_route_optimization_service_account_file
         self.endpoint = endpoint or settings.google_route_optimization_endpoint
+        self.project_id = getattr(settings, "google_route_optimization_project_id", None) or os.getenv("GOOGLE_ROUTE_OPTIMIZATION_PROJECT_ID")
+        self.location = getattr(settings, "google_route_optimization_location", "us-central1")
         self.scope = settings.google_route_optimization_scope
         self.api_key = settings.google_maps_api_key or os.getenv("GOOGLE_MAPS_API_KEY")
         self._token = None
@@ -115,6 +118,57 @@ class GoogleRouteOptimizationService:
             print("GOOGLE_ROUTES_ERROR_BODY =", str(exc))
             raise
 
+    def _optimize_tours_order(
+        self,
+        origin: Dict[str, float],
+        destination: Dict[str, float],
+        waypoints: List[Dict[str, float]],
+        objective: str,
+    ) -> list[int]:
+        token = self._get_access_token()
+        if not token or not self.project_id:
+            raise RuntimeError("Google Route Optimization requires a project and service account")
+        coefficient = {"costPerHour": 1.0} if objective == "MAIS_RAPIDA" else {"costPerKilometer": 1.0}
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        body = {
+            "model": {
+                "globalStartTime": now.isoformat().replace("+00:00", "Z"),
+                "globalEndTime": (now + timedelta(days=1)).isoformat().replace("+00:00", "Z"),
+                "shipments": [
+                    {
+                        "label": point.get("label") or f"Entrega {index}",
+                        "deliveries": [{"arrivalLocation": {"latitude": point["lat"], "longitude": point["lng"]}}],
+                    }
+                    for index, point in enumerate(waypoints)
+                ],
+                "vehicles": [{
+                    "label": "rota-1",
+                    "startLocation": {"latitude": origin["lat"], "longitude": origin["lng"]},
+                    "endLocation": {"latitude": destination["lat"], "longitude": destination["lng"]},
+                    **coefficient,
+                }],
+            },
+            "solvingMode": "DEFAULT_SOLVE",
+        }
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        url = self.OPTIMIZE_TOURS_URL.format(project_id=self.project_id, location=self.location)
+        response = httpx.post(url, json=body, headers=headers, timeout=30)
+        response.raise_for_status()
+        routes = response.json().get("routes") or []
+        visits = routes[0].get("visits") if routes else None
+        if not isinstance(visits, list):
+            raise RuntimeError("Google Route Optimization returned no visits")
+        order = []
+        for visit in visits:
+            if not isinstance(visit, dict) or visit.get("isPickup"):
+                continue
+            shipment_index = visit.get("shipmentIndex")
+            if shipment_index is not None:
+                order.append(int(shipment_index))
+        if sorted(order) != list(range(len(waypoints))):
+            raise RuntimeError("Google Route Optimization returned an incomplete visit sequence")
+        return order
+
     def optimize_route(self,
                        origin: Optional[Dict[str, float]],
                        destination: Optional[Dict[str, float]],
@@ -124,7 +178,7 @@ class GoogleRouteOptimizationService:
                        vehicle_count: int = 1,
                        objective: str = "MAIS_CURTA",
                        ) -> Dict[str, Any]:
-        """Try a configured custom endpoint first; otherwise use the official Routes API."""
+        """Discover order with optimizeTours and evaluate it with computeRoutes."""
         if self.endpoint:
             token = self._get_access_token()
             headers = {"Content-Type": "application/json"}
@@ -143,7 +197,10 @@ class GoogleRouteOptimizationService:
             try:
                 response = httpx.post(self.endpoint, json=body, headers=headers, timeout=20)
                 response.raise_for_status()
-                return response.json()
+                result = response.json()
+                result.setdefault("provider", "GOOGLE_ROUTE_OPTIMIZATION")
+                result.setdefault("optimized", True)
+                return result
             except Exception:
                 pass
 
@@ -159,42 +216,19 @@ class GoogleRouteOptimizationService:
                 "encoded_polyline": None,
             }
 
-        if len(waypoints) <= 3:
-            orders = list(permutations(range(len(waypoints))))
-        else:
-            orders = [tuple(range(len(waypoints)))]
-
-        best_result: Dict[str, Any] | None = None
-        best_order: tuple[int, ...] | None = None
-        best_score: int | None = None
-        for order in orders:
-            ordered_points = [waypoints[index] for index in order]
-            raw = self._compute_routes_response(origin, destination, ordered_points)
-            route = raw.get("routes", [{}])[0] if raw.get("routes") else {}
-            distance = route.get("distanceMeters")
-            duration = self._parse_duration_seconds(route.get("duration"))
-            polyline = None
-            poly = route.get("polyline") or {}
-            if isinstance(poly, dict):
-                polyline = poly.get("encodedPolyline") or poly.get("points")
-
-            print("GOOGLE_ROUTES_DISTANCE_METERS =", distance)
-            print("GOOGLE_ROUTES_DURATION =", duration)
-            print("GOOGLE_ROUTES_POLYLINE_LENGTH =", len(polyline) if polyline else 0)
-
-            score = int(duration or 0) if objective == "MAIS_RAPIDA" else int(distance or 0)
-            if best_result is None or best_score is None or score < best_score:
-                best_result = {
-                    "optimized_order": list(order),
-                    "ordered_waypoints": ordered_points,
-                    "distance_meters": int(distance) if distance is not None else None,
-                    "duration_seconds": duration,
-                    "encoded_polyline": polyline,
-                    "raw": raw,
-                }
-                best_order = order
-                best_score = score
-
-        if best_result is None:
-            raise RuntimeError("Optimized route could not be computed")
-        return best_result
+        order = self._optimize_tours_order(origin, destination, waypoints, objective)
+        ordered_points = [waypoints[index] for index in order]
+        raw = self._compute_routes_response(origin, destination, ordered_points)
+        route = raw.get("routes", [{}])[0] if raw.get("routes") else {}
+        poly = route.get("polyline") or {}
+        polyline = poly.get("encodedPolyline") or poly.get("points") if isinstance(poly, dict) else None
+        return {
+            "optimized_order": order,
+            "ordered_waypoints": ordered_points,
+            "distance_meters": route.get("distanceMeters"),
+            "duration_seconds": self._parse_duration_seconds(route.get("duration")),
+            "encoded_polyline": polyline,
+            "raw": raw,
+            "provider": "GOOGLE_ROUTE_OPTIMIZATION",
+            "optimized": True,
+        }

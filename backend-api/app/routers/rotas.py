@@ -213,6 +213,9 @@ def _persist_route_optimization(db: Session, rota: Rota, objective: str = "MAIS_
         "google_route_id": rota.google_route_id,
         "google_optimization_request_id": rota.google_optimization_request_id,
         "objective": objective,
+        "provider": optimization.get("provider"),
+        "optimized": optimization.get("optimized", False),
+        "fallback_reason": optimization.get("fallback_reason"),
     }
 
 

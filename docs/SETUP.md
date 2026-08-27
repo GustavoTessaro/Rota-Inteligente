@@ -131,5 +131,6 @@ Para usar a otimização real via Google Route Optimization, defina:
 - `USE_GOOGLE_ROUTE_OPTIMIZATION=true`
 - `GOOGLE_ROUTE_OPTIMIZATION_SERVICE_ACCOUNT_FILE`
 - `GOOGLE_ROUTE_OPTIMIZATION_ENDPOINT`
+- `GOOGLE_ROUTE_OPTIMIZATION_PROJECT_ID` e `GOOGLE_ROUTE_OPTIMIZATION_LOCATION`
 
 Se essas variáveis não estiverem configuradas, o projeto cai para o modo stub, que ainda funciona para testes.

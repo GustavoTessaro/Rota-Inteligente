@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     google_route_optimization_service_account_file: str | None = None
     # Optional explicit endpoint for Route Optimization API (useful for testing)
     google_route_optimization_endpoint: str | None = None
+    google_route_optimization_project_id: str | None = None
+    google_route_optimization_location: str = "us-central1"
     # OAuth scope for routes optimization
     google_route_optimization_scope: str = "https://www.googleapis.com/auth/cloud-platform"
 

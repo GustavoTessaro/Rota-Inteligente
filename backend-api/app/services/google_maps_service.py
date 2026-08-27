@@ -126,11 +126,7 @@ class GoogleMapsService:
                        vehicle_count: int = 1,
                        objective: str = "MAIS_CURTA",
                        ) -> Dict[str, Any]:
-        """
-        Stub for route optimization. Returns a structure compatible with a future
-        Route Optimization API integration: optimized_order, ordered_waypoints,
-        estimated distance/duration and optionally an encoded polyline (None in stub).
-        """
+        """Optimize with Google when configured, otherwise return explicit fallback metadata."""
         # Backwards compatibility: if called as optimize_route(waypoints, vehicle_count)
         if isinstance(origin, list) and (destination is None or isinstance(destination, int)):
             waypoints = origin
@@ -192,6 +188,9 @@ class GoogleMapsService:
             "distance_meters": int(round(distance_meters)) if distance_meters > 0 else 1,
             "duration_seconds": duration_seconds,
             "encoded_polyline": _encode_polyline(points) or None,
+            "provider": "FALLBACK",
+            "optimized": False,
+            "fallback_reason": "Google Route Optimization indisponível ou não configurado",
         }
 
 
