@@ -61,6 +61,30 @@ def test_update_vehicle_state_prevents_duplicates_and_updates_existing():
     assert second["3"]["speed"] == 20.0
 
 
+def test_route_status_removes_vehicle_for_terminal_statuses():
+    state = {"3": {"vehicle_id": 3, "latitude": -1, "longitude": -2}}
+
+    for status in ("PAUSADA", "CONCLUIDA", "FINALIZADA", "CANCELADA"):
+        result = update_vehicle_state(
+            state,
+            {"type": "rota_status", "payload": {"veiculo_id": 3, "status": status}},
+        )
+        assert result == {}
+
+
+def test_route_status_execution_and_unknown_vehicle_are_idempotent():
+    state = {"3": {"vehicle_id": 3, "latitude": -1, "longitude": -2}}
+
+    assert update_vehicle_state(
+        state,
+        {"type": "rota_status", "payload": {"veiculo_id": 3, "status": "EM_EXECUCAO"}},
+    ) == state
+    assert update_vehicle_state(
+        state,
+        {"type": "rota_status", "payload": {"veiculo_id": 99, "status": "PAUSADA"}},
+    ) == state
+
+
 def test_build_marker_uses_vehicle_state_fields():
     marker = build_marker({"id": "5", "vehicle_id": 5, "latitude": -1, "longitude": -2, "speed": 7.5, "heading": 180, "timestamp": "abc"})
 

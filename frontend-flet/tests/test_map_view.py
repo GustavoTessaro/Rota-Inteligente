@@ -103,6 +103,37 @@ def test_application_refresh_map_markers_keeps_map_contract():
     assert marker_layer.markers[0].data["vehicle_id"] == 1
 
 
+def test_application_removes_stale_vehicle_state_and_ignores_invalid_timestamp():
+    from datetime import datetime, timedelta, timezone
+    from app.application import DeliveryApp
+
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.vehicle_states = {
+        "old": {
+            "vehicle_id": 1,
+            "latitude": -27.815,
+            "longitude": -50.326,
+            "timestamp": (datetime.now(timezone.utc) - timedelta(seconds=46)).isoformat(),
+        },
+        "invalid": {
+            "vehicle_id": 2,
+            "latitude": -27.815,
+            "longitude": -50.326,
+            "timestamp": "not-a-timestamp",
+        },
+        "recent": {
+            "vehicle_id": 3,
+            "latitude": -27.815,
+            "longitude": -50.326,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+    app._refresh_map_markers = lambda: None
+
+    assert DeliveryApp._remove_stale_vehicle_states(app) is True
+    assert set(app.vehicle_states) == {"invalid", "recent"}
+
+
 def test_map_view_refresh_preserves_map_and_tile_layers():
     view = MapView()
     control = view.build()

@@ -24,6 +24,9 @@ from .map_view import MapView
 from .tracking_client import build_marker, update_vehicle_state
 
 
+TRACKING_STALE_AFTER_SECONDS = 45
+
+
 STATUS_COLORS = {
     "AGUARDANDO_COLETA": ft.Colors.ORANGE,
     "COLETADA": ft.Colors.BLUE,
@@ -97,6 +100,8 @@ class DeliveryApp:
         self.show_login()
 
     def _refresh_dashboard(self):
+        if self._remove_stale_vehicle_states():
+            self._refresh_map_markers()
         if self.user is None or self.user.get("perfil") == "MOTORISTA":
             return
         try:
@@ -111,6 +116,27 @@ class DeliveryApp:
                 self._update_dashboard_controls(data)
         except Exception:
             pass
+
+    def _remove_stale_vehicle_states(self, now=None):
+        current_time = now or datetime.now(timezone.utc)
+        active_states = {}
+        removed = False
+        for vehicle_id, state in getattr(self, "vehicle_states", {}).items():
+            timestamp = state.get("timestamp")
+            try:
+                parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                is_stale = (current_time - parsed).total_seconds() > TRACKING_STALE_AFTER_SECONDS
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                is_stale = False
+            if is_stale:
+                removed = True
+                continue
+            active_states[vehicle_id] = state
+        if removed:
+            self.vehicle_states = active_states
+        return removed
 
     def _start_dashboard_refresh_loop(self):
         if not getattr(self, "dashboard_active", False):

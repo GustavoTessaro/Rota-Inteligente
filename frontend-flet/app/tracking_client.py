@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 
+TERMINAL_TRACKING_STATUSES = {"PAUSADA", "CONCLUIDA", "FINALIZADA", "CANCELADA"}
+
+
 def parse_position_message(message: Any) -> dict[str, Any] | None:
     if not isinstance(message, dict):
         print("[TRACKING_ADMIN] mensagem ignorada motivo=mensagem não é objeto")
@@ -61,6 +64,16 @@ def parse_position_message(message: Any) -> dict[str, Any] | None:
 
 def update_vehicle_state(existing: dict[str, dict[str, Any]], message: Any) -> dict[str, dict[str, Any]]:
     print(f"[TRACKING_ADMIN] mensagem recebida type={message.get('type') if isinstance(message, dict) else None}")
+    if isinstance(message, dict) and message.get("type") == "rota_status":
+        payload = message.get("payload")
+        if not isinstance(payload, dict):
+            return existing
+        vehicle_id = payload.get("veiculo_id")
+        if payload.get("status") not in TERMINAL_TRACKING_STATUSES or vehicle_id in (None, ""):
+            return existing
+        updated = dict(existing)
+        updated.pop(str(vehicle_id), None)
+        return updated
     parsed = parse_position_message(message)
     if not parsed:
         return existing

@@ -84,6 +84,31 @@ def test_create_route_position_broadcasts(client: TestClient, admin_headers: dic
         assert msg['payload']['provider'] == 'gps'
 
 
+def test_route_status_broadcasts_vehicle_status(client: TestClient, admin_headers: dict) -> None:
+    payload, route_id = route_position_payload()
+    with SessionLocal() as db:
+        route = db.get(Rota, route_id)
+        db.commit()
+
+    with client.websocket_connect('/ws/tracking', headers=admin_headers) as websocket:
+        response = client.patch(
+            f'/api/rotas/{route_id}/status',
+            headers=admin_headers,
+            json={"status": "PAUSADA", "evento": "PAUSA"},
+        )
+        assert response.status_code == 200
+        message = websocket.receive_json()
+        assert message == {
+            "type": "rota_status",
+            "payload": {
+                "rota_id": route_id,
+                "veiculo_id": payload["veiculo_id"],
+                "motorista_id": payload["motorista_id"],
+                "status": "PAUSADA",
+            },
+        }
+
+
 def test_create_route_position_rejects_invalid_coordinates(client: TestClient, admin_headers: dict) -> None:
     payload, route_id = route_position_payload()
     payload['latitude'] = '91.0'

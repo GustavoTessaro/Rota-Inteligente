@@ -781,7 +781,7 @@ def delete_route(rota_id: int, db: Session = Depends(get_db), user: Usuario = De
 
 
 @router.patch("/{rota_id}/status", response_model=RotaOut)
-def update_route_status(
+async def update_route_status(
     rota_id: int,
     data: RotaStatusIn,
     db: Session = Depends(get_db),
@@ -871,6 +871,29 @@ def update_route_status(
             alterado_por=user.id,
         ))
     commit(db)
+    if (
+        rota.veiculo_id is not None
+        and previous_status != rota.status
+        and data.status in {
+            StatusRota.EM_EXECUCAO,
+            StatusRota.PAUSADA,
+            StatusRota.CONCLUIDA,
+            StatusRota.FINALIZADA,
+            StatusRota.CANCELADA,
+        }
+    ):
+        await manager.broadcast(
+            {
+                "type": "rota_status",
+                "payload": {
+                    "rota_id": rota.id,
+                    "veiculo_id": rota.veiculo_id,
+                    "motorista_id": rota.motorista_id,
+                    "status": rota.status.value,
+                },
+            },
+            rota.organizacao_id,
+        )
     return rota
 
 
