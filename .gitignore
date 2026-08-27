@@ -13,4 +13,10 @@ site-packages/
 *.apk
 *.keystore
 *.jks
+# Google Cloud credentials must remain local to the backend
+backend-api/credentials/
+backend-api/.secrets/
+**/service-account*.json
+**/*service-account*.json
+**/google-credentials*.json
 frontend-flet/app/generated_config.py

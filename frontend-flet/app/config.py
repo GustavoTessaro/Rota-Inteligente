@@ -7,11 +7,17 @@ except ImportError:
     BUILD_API_BASE_URL = None
     BUILD_MAPTILER_API_KEY = None
 
+DESKTOP_LOCAL_API_BASE_URL = "http://127.0.0.1:8000/api"
 API_BASE_URL = (
-    BUILD_API_BASE_URL
-    or os.getenv("API_BASE_URL")
-    or "http://127.0.0.1:8000/api"
+    DESKTOP_LOCAL_API_BASE_URL
+    if os.getenv("ROTA_DESKTOP_LOCAL") == "1"
+    else (
+        BUILD_API_BASE_URL
+        or os.getenv("API_BASE_URL")
+        or DESKTOP_LOCAL_API_BASE_URL
+    )
 )
+
 MAPTILER_API_KEY = BUILD_MAPTILER_API_KEY or os.getenv("MAPTILER_API_KEY") or ""
 
 

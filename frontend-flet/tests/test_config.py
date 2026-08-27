@@ -12,7 +12,10 @@ def load_config(monkeypatch, generated=None):
     sys.modules.pop("app.config", None)
     sys.modules.pop("app.generated_config", None)
     if generated is None:
-        pass
+        generated_module = types.ModuleType("app.generated_config")
+        generated_module.BUILD_API_BASE_URL = None
+        generated_module.BUILD_MAPTILER_API_KEY = None
+        sys.modules["app.generated_config"] = generated_module
     else:
         generated_module = types.ModuleType("app.generated_config")
         generated_module.BUILD_API_BASE_URL = generated.BUILD_API_BASE_URL
@@ -29,9 +32,22 @@ def load_config(monkeypatch, generated=None):
 
 
 def test_config_uses_desktop_localhost_fallback(monkeypatch):
+    monkeypatch.setenv("ROTA_DESKTOP_LOCAL", "1")
     config = load_config(monkeypatch)
     assert config.API_BASE_URL == "http://127.0.0.1:8000/api"
     assert config.MAPTILER_API_KEY == ""
+
+
+def test_desktop_override_does_not_change_generated_android_config(monkeypatch):
+    monkeypatch.setenv("ROTA_DESKTOP_LOCAL", "1")
+    generated = type("Generated", (), {
+        "BUILD_API_BASE_URL": "http://10.0.0.8:8000/api",
+        "BUILD_MAPTILER_API_KEY": "fake-generated-key",
+    })
+    config = load_config(monkeypatch, generated)
+    assert config.API_BASE_URL == "http://127.0.0.1:8000/api"
+    assert config.BUILD_API_BASE_URL == "http://10.0.0.8:8000/api"
+    assert config.MAPTILER_API_KEY == "fake-generated-key"
 
 
 def test_config_uses_environment(monkeypatch):
