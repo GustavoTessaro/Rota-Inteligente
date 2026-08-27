@@ -84,4 +84,27 @@ def test_optimize_calls_endpoint(monkeypatch, tmp_path):
     res = svc.optimize_route({'lat':0,'lng':0},{'lat':1,'lng':1}, [{'lat':0.1,'lng':0.1}])
     assert 'optimized_order' in res
 
+
+def test_objective_selects_duration_or_distance_without_extra_permutations(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
+    results = {
+        (0, 1): {"distanceMeters": 100, "duration": "20s", "polyline": {"encodedPolyline": "short"}},
+        (1, 0): {"distanceMeters": 200, "duration": "10s", "polyline": {"encodedPolyline": "fast"}},
+    }
+
+    monkeypatch.setattr(
+        svc,
+        "_compute_routes_response",
+        lambda origin, destination, waypoints: {"routes": [results[tuple(point["id"] for point in waypoints)] ]},
+    )
+    origin = {"lat": 0, "lng": 0}
+    destination = {"lat": 1, "lng": 1}
+    waypoints = [{"id": 0, "lat": 0.1, "lng": 0.1}, {"id": 1, "lat": 0.2, "lng": 0.2}]
+
+    fastest = svc.optimize_route(origin, destination, waypoints, objective="MAIS_RAPIDA")
+    shortest = svc.optimize_route(origin, destination, waypoints, objective="MAIS_CURTA")
+
+    assert fastest["optimized_order"] == [1, 0]
+    assert shortest["optimized_order"] == [0, 1]
+
  

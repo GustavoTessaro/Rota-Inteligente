@@ -344,6 +344,59 @@ class DeliveryApp:
             self.driver_location_tracking.stop()
         self._set_gps_tracking_state("inativo")
 
+    def _route_alternatives_panel(self, route, allow_recommendation=False, allow_selection=False):
+        alternatives = route.get("alternativas") or []
+        if not alternatives:
+            return ft.Text("Nenhuma alternativa de rota disponível.", color=ft.Colors.GREY_700)
+
+        controls = [ft.Text("Alternativas de rota", weight=ft.FontWeight.BOLD, size=16)]
+        if route.get("alternativas_equivalentes"):
+            controls.append(ft.Text("As opções mais rápida e mais curta resultaram equivalentes.", color=ft.Colors.GREY_700))
+
+        cards = []
+        for alternative in alternatives[:1] if route.get("alternativas_equivalentes") else alternatives:
+            criterion = alternative.get("criterio", "").replace("MAIS_", "Mais ").title()
+            duration = float(alternative.get("duracao_prevista") or 0) * 60
+            distance = float(alternative.get("distancia_prevista") or 0)
+            sequence = alternative.get("sequencia") or []
+            labels = [f"#{item}" for item in sequence]
+            details = [
+                ft.Text(criterion, weight=ft.FontWeight.BOLD),
+                ft.Text(f"{duration:.0f} min · {distance:.2f} km"),
+                ft.Text(f"Sequência: {' -> '.join(labels) if labels else '-'}", size=12),
+            ]
+            if alternative.get("recomendada"):
+                details.append(ft.Text("Recomendada pelo gestor", color=ft.Colors.INDIGO, weight=ft.FontWeight.BOLD))
+            if alternative.get("selecionada"):
+                details.append(ft.Text("Rota selecionada", color=ft.Colors.GREEN, weight=ft.FontWeight.BOLD))
+            if allow_recommendation and not route.get("alternativa_escolhida_id") and not alternative.get("recomendada"):
+                details.append(ft.OutlinedButton(
+                    "Recomendar esta alternativa",
+                    on_click=lambda _, criterion=alternative.get("criterio"): self._recommend_route_alternative(route, criterion),
+                ))
+            if allow_selection and not route.get("alternativa_escolhida_id"):
+                details.append(ft.FilledButton(
+                    "Escolher esta alternativa",
+                    on_click=lambda _, alternative_id=alternative.get("id"): self._select_route_alternative(route, alternative_id),
+                ))
+            cards.append(ft.Container(ft.Column(details, spacing=6), padding=12, border=ft.border.all(1, ft.Colors.GREY_300)))
+        controls.extend(cards)
+        return ft.Column(controls, spacing=8)
+
+    def _recommend_route_alternative(self, route, criterion):
+        try:
+            self.api.recommend_route_alternative(route["id"], criterion)
+            self.routes_view()
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
+    def _select_route_alternative(self, route, alternative_id):
+        try:
+            self.api.select_route_alternative(route["id"], alternative_id)
+            self.driver_route_view(route["id"])
+        except ApiError as exc:
+            self.notify(str(exc), True)
+
     def _handle_driver_tracking_error(self, error):
         if isinstance(error, GeolocationPermissionDenied):
             self._set_gps_tracking_state("aguardando_permissao")
@@ -1232,7 +1285,7 @@ class DeliveryApp:
                     "Iniciar viagem",
                     icon=ft.Icons.PLAY_ARROW,
                     expand=True,
-                    disabled=not loading_confirmed,
+                    disabled=not loading_confirmed or not route.get("pode_iniciar", False),
                     on_click=lambda _: self._start_route_execution(route),
                 )
                 action_buttons.append(start_button)
@@ -1335,6 +1388,7 @@ class DeliveryApp:
                             ]),
                         ], spacing=24),
                         self.gps_status_text,
+                        self._route_alternatives_panel(route, allow_selection=not route.get("pode_iniciar", False)),
                         ft.Text(f"Origem: {origin_text}", size=11, color=ft.Colors.GREY_700, selectable=True),
                         ft.Text(f"Destino atual: {current_destination}", size=11, color=ft.Colors.GREY_700, selectable=True),
                         ft.Divider(height=12),
@@ -2795,6 +2849,7 @@ class DeliveryApp:
                 ft.Text(f"Motorista: {route.get('motorista_id') or '-'}"),
                 ft.Text(f"Veículo: {route.get('veiculo_id') or '-'}"),
                 ft.Text(f"Observações: {route.get('observacoes') or '-'}"),
+                self._route_alternatives_panel(route, allow_recommendation=True),
                 ft.Divider(),
                 ft.FilledButton("Ver rotas", on_click=lambda _: self.routes_view()),
             ]
@@ -2905,13 +2960,14 @@ class DeliveryApp:
             ft.Text(f'Data de conclusão: {self._format_iso_datetime(route.get("data_conclusao"))}'),
             ft.Text(f'Progresso: {progress}%'),
             ft.ProgressBar(value=min(max(progress / 100, 0), 1), bar_height=8),
+            self._route_alternatives_panel(route, allow_recommendation=True),
         ], tight=True)
         dialog = ft.AlertDialog(
             title=ft.Text(f'Rota #{route["id"]}'),
             content=content,
             actions=[
                 ft.TextButton("Fechar", on_click=lambda _: self.close_dialog(dialog)),
-                ft.FilledButton("Iniciar", visible=self.user["perfil"] != "MOTORISTA" and route.get("status") not in {"EM_EXECUCAO", "FINALIZADA", "CANCELADA"}, on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "EM_EXECUCAO"))),
+                ft.FilledButton("Iniciar", visible=self.user["perfil"] != "MOTORISTA" and route.get("status") not in {"EM_EXECUCAO", "FINALIZADA", "CANCELADA"}, disabled=not route.get("pode_iniciar", False), on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "EM_EXECUCAO"))),
                 ft.FilledButton("Pausar", visible=self.user["perfil"] != "MOTORISTA" and route.get("status") == "EM_EXECUCAO", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "PAUSADA", event="PAUSA", observation="Pausada pela interface"))),
                 ft.FilledButton("Retomar", visible=self.user["perfil"] != "MOTORISTA" and route.get("status") == "PAUSADA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "EM_EXECUCAO", event="RETOMADA", observation="Retomada pela interface"))),
                 ft.FilledButton("Concluir", visible=self.user["perfil"] != "MOTORISTA", on_click=lambda _: (self.close_dialog(dialog), self.change_route_status(route, "FINALIZADA"))),

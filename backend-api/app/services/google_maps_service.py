@@ -124,6 +124,7 @@ class GoogleMapsService:
                        vehicle_constraints: Dict[str, Any] | None = None,
                        time_windows: List[Dict[str, Any]] | None = None,
                        vehicle_count: int = 1,
+                       objective: str = "MAIS_CURTA",
                        ) -> Dict[str, Any]:
         """
         Stub for route optimization. Returns a structure compatible with a future
@@ -144,7 +145,7 @@ class GoogleMapsService:
             print("ROUTE_PROVIDER = GOOGLE")
             try:
                 rosvc = GoogleRouteOptimizationService()
-                return rosvc.optimize_route(origin, destination, waypoints or [], vehicle_constraints, time_windows, vehicle_count=vehicle_count)
+                return rosvc.optimize_route(origin, destination, waypoints or [], vehicle_constraints, time_windows, vehicle_count=vehicle_count, objective=objective)
             except Exception:
                 # fallback to stub if any error occurs
                 print("ROUTE_PROVIDER = FALLBACK")

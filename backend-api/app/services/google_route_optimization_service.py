@@ -122,6 +122,7 @@ class GoogleRouteOptimizationService:
                        vehicle_constraints: Optional[Dict[str, Any]] = None,
                        time_windows: Optional[List[Dict[str, Any]]] = None,
                        vehicle_count: int = 1,
+                       objective: str = "MAIS_CURTA",
                        ) -> Dict[str, Any]:
         """Try a configured custom endpoint first; otherwise use the official Routes API."""
         if self.endpoint:
@@ -137,6 +138,7 @@ class GoogleRouteOptimizationService:
                 "vehicle_constraints": vehicle_constraints,
                 "time_windows": time_windows,
                 "vehicle_count": vehicle_count,
+                "objective": objective,
             }
             try:
                 response = httpx.post(self.endpoint, json=body, headers=headers, timeout=20)
@@ -164,6 +166,7 @@ class GoogleRouteOptimizationService:
 
         best_result: Dict[str, Any] | None = None
         best_order: tuple[int, ...] | None = None
+        best_score: int | None = None
         for order in orders:
             ordered_points = [waypoints[index] for index in order]
             raw = self._compute_routes_response(origin, destination, ordered_points)
@@ -179,8 +182,8 @@ class GoogleRouteOptimizationService:
             print("GOOGLE_ROUTES_DURATION =", duration)
             print("GOOGLE_ROUTES_POLYLINE_LENGTH =", len(polyline) if polyline else 0)
 
-            score = int(distance or 0)
-            if best_result is None or score < int(best_result.get("distance_meters") or 0):
+            score = int(duration or 0) if objective == "MAIS_RAPIDA" else int(distance or 0)
+            if best_result is None or best_score is None or score < best_score:
                 best_result = {
                     "optimized_order": list(order),
                     "ordered_waypoints": ordered_points,
@@ -190,6 +193,7 @@ class GoogleRouteOptimizationService:
                     "raw": raw,
                 }
                 best_order = order
+                best_score = score
 
         if best_result is None:
             raise RuntimeError("Optimized route could not be computed")

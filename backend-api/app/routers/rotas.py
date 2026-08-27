@@ -1,4 +1,5 @@
 import hashlib
+import json
 import traceback
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -35,6 +36,8 @@ from ..models import (
     Perfil,
     Produto,
     Rota,
+    RotaAlternativa,
+    CriterioAlternativaRota,
     RotaEntrega,
     RotaHistorico,
     RotaPosicao,
@@ -55,6 +58,8 @@ from ..schemas import (
     RotaPosicaoOut,
     ResumoDiarioMotorista,
     RotaStatusIn,
+    AlternativaRecomendacaoIn,
+    AlternativaSelecaoIn,
     StatusRota,
 )
 from ..security import current_user
@@ -76,8 +81,9 @@ class RouteOptimizationService:
         vehicle_constraints: dict[str, Any] | None = None,
         time_windows: list[dict[str, Any]] | None = None,
         vehicle_count: int = 1,
+        objective: str = "MAIS_CURTA",
     ) -> dict[str, Any]:
-        return self.service.optimize_route(origin, destination, waypoints, vehicle_constraints, time_windows, vehicle_count=vehicle_count)
+        return self.service.optimize_route(origin, destination, waypoints, vehicle_constraints, time_windows, vehicle_count=vehicle_count, objective=objective)
 
 
 def _address_to_query(address: Endereco | None) -> str | None:
@@ -128,7 +134,7 @@ def _resolve_address_coordinates(db: Session, address: Endereco | None, geocoder
     return {"lat": float(lat), "lng": float(lng)}
 
 
-def _persist_route_optimization(db: Session, rota: Rota) -> dict[str, Any]:
+def _persist_route_optimization(db: Session, rota: Rota, objective: str = "MAIS_CURTA", persist_official: bool = True) -> dict[str, Any]:
     if rota.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA}:
         return
     if not rota.entregas:
@@ -173,27 +179,27 @@ def _persist_route_optimization(db: Session, rota: Rota) -> dict[str, Any]:
     if destination is None and rota.destino_endereco_id is None and rota.entregas:
         destination = waypoints[-1]
 
-    optimization = RouteOptimizationService().optimize_route(origin, destination, waypoints)
+    optimization = RouteOptimizationService().optimize_route(origin, destination, waypoints, objective=objective)
     optimized_order = optimization.get("optimized_order") or list(range(len(waypoints)))
     ordered_waypoints = optimization.get("ordered_waypoints") or [waypoints[index] for index in optimized_order]
 
     ordered_entries = sorted(rota.entregas, key=lambda item: item.ordem_visita or 0)
-    if len(ordered_entries) == len(optimized_order):
+    if persist_official and len(ordered_entries) == len(optimized_order):
         for position, entry in enumerate(ordered_entries):
             if position in optimized_order:
                 entry.sequencia_otimizada = optimized_order.index(position) + 1
             else:
                 entry.sequencia_otimizada = None
 
-    if optimization.get("distance_meters") is not None:
+    if persist_official and optimization.get("distance_meters") is not None:
         rota.distancia_prevista = Decimal(str(optimization["distance_meters"] / 1000))
-    if optimization.get("duration_seconds") is not None:
+    if persist_official and optimization.get("duration_seconds") is not None:
         rota.duracao_prevista = Decimal(str(optimization["duration_seconds"] / 3600))
-    if optimization.get("google_route_id"):
+    if persist_official and optimization.get("google_route_id"):
         rota.google_route_id = optimization["google_route_id"]
-    if optimization.get("google_optimization_request_id"):
+    if persist_official and optimization.get("google_optimization_request_id"):
         rota.google_optimization_request_id = optimization["google_optimization_request_id"]
-    if optimization.get("encoded_polyline"):
+    if persist_official and optimization.get("encoded_polyline"):
         rota.route_geometry = optimization["encoded_polyline"]
     if requested_status not in {StatusRota.EM_EXECUCAO, StatusRota.PAUSADA}:
         rota.status = StatusRota.PRONTA
@@ -206,7 +212,72 @@ def _persist_route_optimization(db: Session, rota: Rota) -> dict[str, Any]:
         "encoded_polyline": optimization.get("encoded_polyline"),
         "google_route_id": rota.google_route_id,
         "google_optimization_request_id": rota.google_optimization_request_id,
+        "objective": objective,
     }
+
+
+def _alternative_payload(db: Session, rota: Rota, objective: CriterioAlternativaRota) -> dict[str, Any]:
+    result = _persist_route_optimization(db, rota, objective=objective.value, persist_official=False)
+    ordered_entries = sorted(rota.entregas, key=lambda item: item.ordem_visita or 0)
+    sequence = [ordered_entries[index].id for index in result["optimized_order"]]
+    return {
+        "criterio": objective,
+        "distancia_prevista": Decimal(str((result.get("distance_meters") or 0) / 1000)),
+        "duracao_prevista": Decimal(str((result.get("duration_seconds") or 0) / 3600)),
+        "route_geometry": result.get("encoded_polyline"),
+        "sequencia_json": json.dumps(sequence),
+    }
+
+
+def _persist_route_alternatives(db: Session, rota: Rota) -> list[RotaAlternativa]:
+    alternatives = []
+    for objective in (CriterioAlternativaRota.MAIS_RAPIDA, CriterioAlternativaRota.MAIS_CURTA):
+        data = _alternative_payload(db, rota, objective)
+        alternative = RotaAlternativa(rota=rota, **data)
+        db.add(alternative)
+        alternatives.append(alternative)
+    db.flush()
+    return alternatives
+
+
+def _serialize_alternatives(rota: Rota) -> list[dict[str, Any]]:
+    equivalent = _alternatives_are_equivalent(rota.alternativas)
+    return [
+        {
+            "id": alternative.id,
+            "rota_id": alternative.rota_id,
+            "criterio": alternative.criterio.value,
+            "distancia_prevista": float(alternative.distancia_prevista or 0),
+            "duracao_prevista": float(alternative.duracao_prevista or 0),
+            "route_geometry": alternative.route_geometry,
+            "sequencia": json.loads(alternative.sequencia_json),
+            "recomendada": alternative.id == rota.alternativa_recomendada_id,
+            "selecionada": alternative.id == rota.alternativa_escolhida_id,
+            "equivalente": equivalent,
+        }
+        for alternative in rota.alternativas
+    ]
+
+
+def _alternatives_are_equivalent(alternatives: list[RotaAlternativa]) -> bool:
+    if len(alternatives) < 2:
+        return False
+    first, second = alternatives[:2]
+    return (
+        json.loads(first.sequencia_json) == json.loads(second.sequencia_json)
+        and first.distancia_prevista == second.distancia_prevista
+        and first.duracao_prevista == second.duracao_prevista
+        and first.route_geometry == second.route_geometry
+    )
+
+
+def _find_route_alternative(db: Session, rota: Rota, alternative_id: int | None, criterion: CriterioAlternativaRota | None) -> RotaAlternativa:
+    alternative = db.get(RotaAlternativa, alternative_id) if alternative_id is not None else None
+    if alternative is None and criterion is not None:
+        alternative = next((item for item in rota.alternativas if item.criterio == criterion), None)
+    if alternative is None or alternative.rota_id != rota.id:
+        raise HTTPException(422, "Alternativa não pertence à rota")
+    return alternative
 
 
 @router.get("", response_model=list[RotaOut])
@@ -240,6 +311,9 @@ def list_routes(
 @router.post("/gerar", response_model=RotaOut, status_code=201)
 def generate_route_from_orders(data: RotaGerarIn, db: Session = Depends(get_db), user: Usuario = Depends(staff)):
     ensure_route_payload_scope(user, data)
+
+    if data.status == StatusRota.EM_EXECUCAO:
+        raise HTTPException(422, "Uma rota nova precisa de uma alternativa escolhida antes de iniciar")
 
     if not data.pedido_ids:
         raise HTTPException(422, "Selecione ao menos um pedido para gerar a rota")
@@ -334,14 +408,14 @@ def generate_route_from_orders(data: RotaGerarIn, db: Session = Depends(get_db),
         RotaEntrega(
             entrega_id=delivery.id,
             ordem_visita=index,
-            sequencia_otimizada=index,
+            sequencia_otimizada=None,
         )
         for index, delivery in enumerate(deliveries, start=1)
     ]
     db.add(rota)
     db.flush()
     try:
-        _persist_route_optimization(db, rota)
+        _persist_route_alternatives(db, rota)
     except HTTPException:
         raise
     except Exception as exc:
@@ -542,6 +616,13 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
             } if rota.motorista else None,
             "distancia_real": float(rota.distancia_real or 0),
             "duracao_real": float(rota.duracao_real or 0),
+            "alternativa_recomendada_id": rota.alternativa_recomendada_id,
+            "alternativa_escolhida_id": rota.alternativa_escolhida_id,
+            "alternativa_escolhida_por": rota.alternativa_escolhida_por,
+            "alternativa_escolhida_em": rota.alternativa_escolhida_em.isoformat() if rota.alternativa_escolhida_em else None,
+            "alternativas": _serialize_alternatives(rota),
+            "alternativas_equivalentes": _alternatives_are_equivalent(rota.alternativas),
+            "pode_iniciar": rota.alternativa_escolhida_id is not None,
         }
         return payload
     except Exception:
@@ -794,6 +875,8 @@ async def update_route_status(
     if data.status == StatusRota.CANCELADA and rota.status == StatusRota.FINALIZADA:
         raise HTTPException(422, "Rota finalizada não pode ser cancelada")
     if data.status == StatusRota.EM_EXECUCAO:
+        if rota.alternativa_escolhida_id is None:
+            raise HTTPException(422, "Selecione uma alternativa antes de iniciar a rota")
         if rota.motorista_id is None:
             raise HTTPException(422, "Rota precisa de um motorista associado para iniciar")
         driver = get_or_404(db, Usuario, rota.motorista_id)
@@ -897,6 +980,73 @@ async def update_route_status(
     return rota
 
 
+@router.patch("/{rota_id}/recomendacao", response_model=RotaOut)
+def recommend_route_alternative(
+    rota_id: int,
+    data: AlternativaRecomendacaoIn,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(staff),
+):
+    rota = get_or_404(db, Rota, rota_id)
+    ensure_route_access_scope(user, rota)
+    if rota.alternativa_escolhida_id is not None:
+        raise HTTPException(422, "A recomendação não pode ser alterada após a escolha")
+    alternative = _find_route_alternative(db, rota, None, data.criterio)
+    rota.alternativa_recomendada_id = alternative.id
+    rota.historico.append(RotaHistorico(
+        evento=TipoEventoRota.ALTERNATIVA_RECOMENDADA,
+        status_anterior=rota.status.value,
+        status_novo=rota.status.value,
+        observacao=f"Alternativa recomendada: {alternative.criterio.value}",
+        alterado_por=user.id,
+    ))
+    commit(db)
+    db.refresh(rota)
+    return rota
+
+
+@router.post("/{rota_id}/selecionar-alternativa", response_model=RotaOut)
+def select_route_alternative(
+    rota_id: int,
+    data: AlternativaSelecaoIn,
+    db: Session = Depends(get_db),
+    user: Usuario = Depends(current_user),
+):
+    if user.perfil != Perfil.MOTORISTA:
+        raise HTTPException(403, "Somente o motorista pode selecionar a alternativa")
+    rota = get_or_404(db, Rota, rota_id)
+    ensure_route_access_scope(user, rota)
+    if rota.motorista_id != user.id:
+        raise HTTPException(403, "Somente o motorista atribuído pode selecionar a alternativa")
+    if rota.status == StatusRota.EM_EXECUCAO:
+        raise HTTPException(422, "A alternativa não pode ser selecionada após o início")
+    alternative = _find_route_alternative(db, rota, data.alternativa_id, data.criterio)
+    if rota.alternativa_escolhida_id is not None:
+        if rota.alternativa_escolhida_id == alternative.id:
+            return rota
+        raise HTTPException(422, "A alternativa escolhida não pode ser trocada")
+    rota.alternativa_escolhida_id = alternative.id
+    rota.alternativa_escolhida_por = user.id
+    rota.alternativa_escolhida_em = current_time()
+    rota.distancia_prevista = alternative.distancia_prevista
+    rota.duracao_prevista = alternative.duracao_prevista
+    rota.route_geometry = alternative.route_geometry
+    sequence = json.loads(alternative.sequencia_json)
+    sequence_by_entry = {entry_id: index for index, entry_id in enumerate(sequence, start=1)}
+    for entry in rota.entregas:
+        entry.sequencia_otimizada = sequence_by_entry.get(entry.id)
+    rota.historico.append(RotaHistorico(
+        evento=TipoEventoRota.ALTERNATIVA_SELECIONADA,
+        status_anterior=rota.status.value,
+        status_novo=rota.status.value,
+        observacao=f"Alternativa selecionada: {alternative.criterio.value} pelo motorista {user.id}",
+        alterado_por=user.id,
+    ))
+    commit(db)
+    db.refresh(rota)
+    return rota
+
+
 @router.post("/{rota_id}/otimizar", response_model=RotaOptimizationOut)
 def optimize_route_endpoint(
     rota_id: int,
@@ -908,10 +1058,12 @@ def optimize_route_endpoint(
 
     if rota.status in {StatusRota.FINALIZADA, StatusRota.CANCELADA}:
         raise HTTPException(422, "Não é possível otimizar uma rota finalizada ou cancelada")
+    if rota.alternativa_escolhida_id is not None:
+        raise HTTPException(422, "A rota já possui uma alternativa escolhida")
     if not rota.entregas:
         raise HTTPException(422, "Rota precisa de entregas para otimização")
 
-    optimization = _persist_route_optimization(db, rota)
+    optimization = _persist_route_optimization(db, rota, persist_official=False)
     commit(db)
     return optimization
 

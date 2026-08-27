@@ -59,3 +59,9 @@ class ApiClient:
             return result
         except ApiError as exc:
             raise
+
+    def recommend_route_alternative(self, route_id: int, criterion: str):
+        return self.request("PATCH", f"/rotas/{route_id}/recomendacao", json={"criterio": criterion})
+
+    def select_route_alternative(self, route_id: int, alternative_id: int):
+        return self.request("POST", f"/rotas/{route_id}/selecionar-alternativa", json={"alternativa_id": alternative_id})

@@ -259,9 +259,10 @@ def test_generate_route_optimizes_and_persists_metrics(client: TestClient, admin
     assert response.status_code == 201
     data = response.json()
     assert data["status"] == "PRONTA"
-    assert Decimal(str(data["distancia_prevista"])) == Decimal("1.20")
-    assert Decimal(str(data["duracao_prevista"])) == Decimal("0.07")
-    assert data["route_geometry"] == "abc123"
+    assert Decimal(str(data["distancia_prevista"])) == Decimal("0.0")
+    assert Decimal(str(data["duracao_prevista"])) == Decimal("0.0")
+    assert data["route_geometry"] is None
+    assert {item["criterio"] for item in data["alternativas"]} == {"MAIS_RAPIDA", "MAIS_CURTA"}
 
 
 def test_optimize_route_requires_existing_route(client: TestClient, admin_headers: dict) -> None:
@@ -286,7 +287,7 @@ def test_optimize_route_requires_deliveries(client: TestClient, admin_headers: d
     assert optimize.status_code == 422
 
 
-def test_optimize_route_persists_result_and_sequence(client: TestClient, admin_headers: dict) -> None:
+def test_optimize_route_does_not_commit_official_result_before_selection(client: TestClient, admin_headers: dict) -> None:
     route = _create_route_with_delivery(client, admin_headers)
 
     with patch("app.routers.rotas.RouteOptimizationService.optimize_route", return_value={
@@ -309,9 +310,10 @@ def test_optimize_route_persists_result_and_sequence(client: TestClient, admin_h
     with SessionLocal() as db:
         persisted = db.get(Rota, route["id"])
         assert persisted is not None
-        assert persisted.google_route_id == "route-123"
-        assert persisted.google_optimization_request_id == "opt-123"
-        assert persisted.route_geometry == "abc123"
+        assert persisted.google_route_id is None
+        assert persisted.google_optimization_request_id is None
+        assert persisted.route_geometry is None
+        assert persisted.alternativa_escolhida_id is None
 
 
 def test_optimize_route_rejects_finalized_route(client: TestClient, admin_headers: dict) -> None:

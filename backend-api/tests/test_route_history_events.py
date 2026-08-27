@@ -1,7 +1,9 @@
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.models import Endereco, Entrega, Organizacao, Perfil, Pedido, Rota, RotaEntrega, StatusEntrega, StatusRota, Usuario
+import json
+
+from app.models import Endereco, Entrega, Organizacao, Perfil, Pedido, Rota, RotaAlternativa, RotaEntrega, StatusEntrega, StatusRota, Usuario, CriterioAlternativaRota
 
 
 def _login(client, email, password="123456"):
@@ -33,7 +35,20 @@ def _create_route(client, status=StatusRota.PRONTA):
         )
         db.add_all([delivery, route])
         db.flush()
-        db.add(RotaEntrega(rota_id=route.id, entrega_id=delivery.id, ordem_visita=1, sequencia_otimizada=1))
+        entry = RotaEntrega(rota_id=route.id, entrega_id=delivery.id, ordem_visita=1, sequencia_otimizada=None)
+        db.add(entry)
+        db.flush()
+        alternative = RotaAlternativa(
+            rota_id=route.id,
+            criterio=CriterioAlternativaRota.MAIS_CURTA,
+            distancia_prevista=1,
+            duracao_prevista=1,
+            sequencia_json=json.dumps([entry.id]),
+        )
+        db.add(alternative)
+        db.flush()
+        route.alternativa_escolhida_id = alternative.id
+        route.alternativa_escolhida_por = driver.id
         db.commit()
         return route.id, driver.email
 

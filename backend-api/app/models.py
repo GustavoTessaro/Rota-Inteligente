@@ -1,4 +1,5 @@
 import enum
+import json
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -134,6 +135,11 @@ class StatusRota(str, enum.Enum):
     FINALIZADA = "FINALIZADA"
 
 
+class CriterioAlternativaRota(str, enum.Enum):
+    MAIS_RAPIDA = "MAIS_RAPIDA"
+    MAIS_CURTA = "MAIS_CURTA"
+
+
 class TipoEventoRota(str, enum.Enum):
     PARTIDA = "PARTIDA"
     PAUSA = "PAUSA"
@@ -145,6 +151,8 @@ class TipoEventoRota(str, enum.Enum):
     ENTREGA_FALHOU = "ENTREGA_FALHOU"
     FINALIZADA = "FINALIZADA"
     CANCELAMENTO = "CANCELAMENTO"
+    ALTERNATIVA_RECOMENDADA = "ALTERNATIVA_RECOMENDADA"
+    ALTERNATIVA_SELECIONADA = "ALTERNATIVA_SELECIONADA"
 
 
 class Rota(TimestampMixin, Base):
@@ -175,14 +183,76 @@ class Rota(TimestampMixin, Base):
     google_optimization_request_id: Mapped[str | None] = mapped_column(String(255))
     route_geometry: Mapped[str | None] = mapped_column(Text)
     observacoes: Mapped[str | None] = mapped_column(Text)
+    alternativa_recomendada_id: Mapped[int | None] = mapped_column(ForeignKey("rota_alternativas.id"), index=True)
+    alternativa_escolhida_id: Mapped[int | None] = mapped_column(ForeignKey("rota_alternativas.id"), index=True)
+    alternativa_escolhida_por: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id"), index=True)
+    alternativa_escolhida_em: Mapped[datetime | None] = mapped_column(DateTime)
     organizacao: Mapped[Organizacao] = relationship()
     veiculo: Mapped[Veiculo | None] = relationship()
-    motorista: Mapped[Usuario | None] = relationship()
+    motorista: Mapped[Usuario | None] = relationship(foreign_keys=[motorista_id])
     origem_endereco: Mapped[Endereco | None] = relationship(foreign_keys=[origem_endereco_id])
     destino_endereco: Mapped[Endereco | None] = relationship(foreign_keys=[destino_endereco_id])
     entregas: Mapped[list["RotaEntrega"]] = relationship(back_populates="rota", cascade="all, delete-orphan")
     historico: Mapped[list["RotaHistorico"]] = relationship(back_populates="rota", cascade="all, delete-orphan")
     posicoes: Mapped[list["RotaPosicao"]] = relationship(back_populates="rota", cascade="all, delete-orphan")
+    alternativas: Mapped[list["RotaAlternativa"]] = relationship(
+        "RotaAlternativa", back_populates="rota", foreign_keys="RotaAlternativa.rota_id", cascade="all, delete-orphan"
+    )
+    alternativa_recomendada: Mapped[Optional["RotaAlternativa"]] = relationship(
+        "RotaAlternativa", foreign_keys=[alternativa_recomendada_id], post_update=True
+    )
+    alternativa_escolhida: Mapped[Optional["RotaAlternativa"]] = relationship(
+        "RotaAlternativa", foreign_keys=[alternativa_escolhida_id], post_update=True
+    )
+
+    @property
+    def alternativas_equivalentes(self) -> bool:
+        if len(self.alternativas) < 2:
+            return False
+        first, second = self.alternativas[:2]
+        return (
+            first.sequencia == second.sequencia
+            and first.distancia_prevista == second.distancia_prevista
+            and first.duracao_prevista == second.duracao_prevista
+            and first.route_geometry == second.route_geometry
+        )
+
+    @property
+    def pode_iniciar(self) -> bool:
+        return self.alternativa_escolhida_id is not None
+
+
+class RotaAlternativa(TimestampMixin, Base):
+    __tablename__ = "rota_alternativas"
+    __table_args__ = (UniqueConstraint("rota_id", "criterio", name="uq_rota_alternativas_rota_criterio"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rota_id: Mapped[int] = mapped_column(ForeignKey("rotas.id"), index=True)
+    criterio: Mapped[CriterioAlternativaRota] = mapped_column(Enum(CriterioAlternativaRota), nullable=False)
+    distancia_prevista: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    duracao_prevista: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    route_geometry: Mapped[str | None] = mapped_column(Text)
+    sequencia_json: Mapped[str] = mapped_column(Text, nullable=False)
+    rota: Mapped[Rota] = relationship("Rota", back_populates="alternativas", foreign_keys=[rota_id])
+
+    @property
+    def sequencia(self) -> list[int]:
+        try:
+            return json.loads(self.sequencia_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+
+    @property
+    def recomendada(self) -> bool:
+        return bool(self.rota and self.rota.alternativa_recomendada_id == self.id)
+
+    @property
+    def selecionada(self) -> bool:
+        return bool(self.rota and self.rota.alternativa_escolhida_id == self.id)
+
+    @property
+    def equivalente(self) -> bool:
+        return bool(self.rota and self.rota.alternativas_equivalentes)
 
 
 class RotaEntrega(Base):

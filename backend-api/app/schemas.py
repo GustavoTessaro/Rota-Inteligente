@@ -5,7 +5,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from .models import Perfil, Prioridade, StatusEntrega, StatusPedido, StatusVeiculo, StatusRota, TipoEventoRota, TipoVeiculo
+from .models import CriterioAlternativaRota, Perfil, Prioridade, StatusEntrega, StatusPedido, StatusVeiculo, StatusRota, TipoEventoRota, TipoVeiculo
 
 
 class ORMModel(BaseModel):
@@ -256,6 +256,28 @@ class RotaHistoricoOut(ORMModel):
     criado_em: datetime
 
 
+class RotaAlternativaOut(ORMModel):
+    id: int
+    rota_id: int
+    criterio: CriterioAlternativaRota
+    distancia_prevista: float
+    duracao_prevista: float
+    route_geometry: str | None
+    sequencia: list[int]
+    recomendada: bool = False
+    selecionada: bool = False
+    equivalente: bool = False
+
+
+class AlternativaRecomendacaoIn(BaseModel):
+    criterio: CriterioAlternativaRota
+
+
+class AlternativaSelecaoIn(BaseModel):
+    alternativa_id: int | None = None
+    criterio: CriterioAlternativaRota | None = None
+
+
 class RotaCreate(BaseModel):
     nome: str = Field(min_length=2, max_length=150)
     descricao: str | None = None
@@ -419,8 +441,15 @@ class RotaOut(ORMModel):
     observacoes: str | None
     criado_em: datetime
     atualizado_em: datetime
+    alternativa_recomendada_id: int | None = None
+    alternativa_escolhida_id: int | None = None
+    alternativa_escolhida_por: int | None = None
+    alternativa_escolhida_em: datetime | None = None
+    alternativas: list[RotaAlternativaOut] | None = None
     entregas: list[RotaEntregaOut] | None = None
     historico: list[RotaHistoricoOut] | None = None
+    alternativas_equivalentes: bool = False
+    pode_iniciar: bool = False
 
 
 class ClienteCreate(BaseModel):
