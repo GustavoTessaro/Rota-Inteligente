@@ -24,7 +24,7 @@ class GoogleRouteOptimizationService:
     """
 
     OFFICIAL_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
-    OPTIMIZE_TOURS_URL = "https://routeoptimization.googleapis.com/v1/projects/{project_id}/locations/{location}:optimizeTours"
+    OPTIMIZE_TOURS_URL = "https://routeoptimization.googleapis.com/v1/projects/{project_id}:optimizeTours"
 
     def __init__(self, service_account_file: Optional[str] = None, endpoint: Optional[str] = None):
         settings = get_settings()
@@ -151,7 +151,7 @@ class GoogleRouteOptimizationService:
             "solvingMode": "DEFAULT_SOLVE",
         }
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        url = self.OPTIMIZE_TOURS_URL.format(project_id=self.project_id, location=self.location)
+        url = self.OPTIMIZE_TOURS_URL.format(project_id=self.project_id)
         response = httpx.post(url, json=body, headers=headers, timeout=30)
         response.raise_for_status()
         routes = response.json().get("routes") or []

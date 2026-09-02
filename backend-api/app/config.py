@@ -1,7 +1,10 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .runtime_paths import is_packaged_runtime, resolve_database_url
 
 
 class Settings(BaseSettings):
@@ -44,7 +47,19 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    explicit_database_url = os.environ.get("DATABASE_URL", "").strip()
+    if explicit_database_url:
+        settings.database_url = explicit_database_url
+        return settings
+
+    if is_packaged_runtime():
+        settings.database_url = resolve_database_url()
+        return settings
+
+    if settings.database_url.startswith("sqlite"):
+        settings.database_url = resolve_database_url()
+    return settings
 
 
 settings = get_settings()

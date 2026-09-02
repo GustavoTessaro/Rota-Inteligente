@@ -167,6 +167,7 @@ def test_optimize_tours_uses_distance_cost_for_shortest(monkeypatch):
 
     def fake_post(url, json=None, headers=None, timeout=None):
         captured["body"] = json
+        captured["url"] = url
         return Response()
 
     monkeypatch.setattr(service_module.httpx, "post", fake_post)
@@ -176,6 +177,34 @@ def test_optimize_tours_uses_distance_cost_for_shortest(monkeypatch):
     vehicle = captured["body"]["model"]["vehicles"][0]
     assert vehicle["costPerKilometer"] == 1.0
     assert "costPerHour" not in vehicle
+    assert captured["url"] == "https://routeoptimization.googleapis.com/v1/projects/project:optimizeTours"
+
+
+def test_optimize_tours_uses_project_level_endpoint_without_location(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file="service.json", endpoint=None)
+    svc.project_id = "project"
+    svc.location = "us-central1"
+    svc._get_access_token = lambda: "token"
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"routes": [{"visits": [{"shipmentIndex": 0}, {"shipmentIndex": 1}]}]}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        return Response()
+
+    monkeypatch.setattr(service_module.httpx, "post", fake_post)
+    monkeypatch.setattr(svc, "_compute_routes_response", lambda origin, destination, points: {"routes": [{"distanceMeters": 1, "duration": "1s"}]})
+
+    svc.optimize_route({"lat": 0, "lng": 0}, {"lat": 1, "lng": 1}, [{"lat": 0.1, "lng": 0.1}, {"lat": 0.2, "lng": 0.2}], objective="MAIS_CURTA")
+
+    assert captured["url"] == "https://routeoptimization.googleapis.com/v1/projects/project:optimizeTours"
+    assert "/locations/" not in captured["url"]
 
 
 def test_fifteen_second_difference_keeps_each_candidate_bundle_atomic(monkeypatch):

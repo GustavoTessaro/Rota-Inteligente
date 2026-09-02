@@ -20,3 +20,4 @@ backend-api/.secrets/
 **/*service-account*.json
 **/google-credentials*.json
 frontend-flet/app/generated_config.py
+backend-api/secrets
