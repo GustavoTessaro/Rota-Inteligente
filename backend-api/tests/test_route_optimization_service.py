@@ -1,11 +1,96 @@
 import json
 import types
+from pathlib import Path
 
 from app.services import google_route_optimization_service as service_module
 from app.services.google_route_optimization_service import GoogleRouteOptimizationService
 
 
+def test_service_account_path_is_resolved_from_repo_root(monkeypatch):
+    rel = Path("backend-api") / "secrets" / "gmp-demo-project-938388767-2b753ed1c56d.json"
+    svc = GoogleRouteOptimizationService(service_account_file=str(rel), endpoint=None)
+    assert Path(svc.sa_file).is_file()
+
+
+def test_rebuild_visit_order_accepts_explicit_zero_shipment_index(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
+    waypoints = [{"label": "shipment-0"}, {"label": "shipment-1"}, {"label": "shipment-2"}]
+    visits = [{"shipmentIndex": 0, "shipmentLabel": "shipment-0"}, {"shipmentIndex": 1, "shipmentLabel": "shipment-1"}, {"shipmentIndex": 2, "shipmentLabel": "shipment-2"}]
+    assert svc._rebuild_visit_order(visits, waypoints) == [0, 1, 2]
+
+
+def test_rebuild_visit_order_uses_label_when_index_is_omitted(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
+    waypoints = [{"label": "shipment-0"}, {"label": "shipment-1"}, {"label": "shipment-2"}]
+    visits = [{"shipmentLabel": "shipment-0"}, {"shipmentLabel": "shipment-1"}, {"shipmentLabel": "shipment-2"}]
+    assert svc._rebuild_visit_order(visits, waypoints) == [0, 1, 2]
+
+
+def test_rebuild_visit_order_rejects_unknown_label(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
+    waypoints = [{"label": "shipment-0"}, {"label": "shipment-1"}]
+    visits = [{"shipmentLabel": "shipment-99"}]
+    try:
+        svc._rebuild_visit_order(visits, waypoints)
+        assert False
+    except RuntimeError as exc:
+        assert "unknown shipmentLabel" in str(exc)
+
+
+def test_rebuild_visit_order_rejects_duplicate_labels(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
+    waypoints = [{"label": "shipment-0"}, {"label": "shipment-0"}]
+    try:
+        svc._rebuild_visit_order([], waypoints)
+        assert False
+    except RuntimeError as exc:
+        assert "duplicate shipment labels" in str(exc)
+
+
+def test_rebuild_visit_order_rejects_duplicate_indexes(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
+    waypoints = [{"label": "shipment-0"}, {"label": "shipment-1"}]
+    visits = [{"shipmentIndex": 0}, {"shipmentIndex": 0}]
+    try:
+        svc._rebuild_visit_order(visits, waypoints)
+        assert False
+    except RuntimeError as exc:
+        assert "duplicate shipmentIndex" in str(exc)
+
+
+def test_rebuild_visit_order_rejects_incomplete_sequence(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
+    waypoints = [{"label": "shipment-0"}, {"label": "shipment-1"}, {"label": "shipment-2"}]
+    visits = [{"shipmentIndex": 0}, {"shipmentIndex": 2}]
+    try:
+        svc._rebuild_visit_order(visits, waypoints)
+        assert False
+    except RuntimeError as exc:
+        assert "incomplete visit sequence" in str(exc)
+
+
+def test_rebuild_visit_order_rejects_skipped_shipments(monkeypatch):
+    svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
+    waypoints = [{"label": "shipment-0"}, {"label": "shipment-1"}]
+    visits = [{"shipmentIndex": 0}, {"shipmentIndex": 1}]
+    try:
+        svc._rebuild_visit_order(visits, waypoints, skipped_shipments=[1])
+        assert False
+    except RuntimeError as exc:
+        assert "skipped shipments" in str(exc)
+
+
 def test_token_fallback_no_file(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            google_route_optimization_service_account_file=None,
+            google_route_optimization_endpoint=None,
+            google_route_optimization_scope="https://www.googleapis.com/auth/cloud-platform",
+            google_maps_api_key=None,
+        ),
+    )
     svc = GoogleRouteOptimizationService(service_account_file=None, endpoint=None)
     assert svc._get_access_token() is None
 

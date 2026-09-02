@@ -1,6 +1,7 @@
 import os
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import time
 import httpx
@@ -26,9 +27,27 @@ class GoogleRouteOptimizationService:
     OFFICIAL_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
     OPTIMIZE_TOURS_URL = "https://routeoptimization.googleapis.com/v1/projects/{project_id}:optimizeTours"
 
+    @staticmethod
+    def _resolve_service_account_path(path_value: Optional[str]) -> Optional[str]:
+        if not path_value:
+            return None
+
+        candidate = Path(path_value)
+        if candidate.is_absolute():
+            return str(candidate)
+
+        repo_root = Path(__file__).resolve().parents[3]
+        backend_root = Path(__file__).resolve().parents[2]
+        for base in (repo_root, backend_root, Path.cwd()):
+            resolved = (base / candidate).resolve()
+            if resolved.exists():
+                return str(resolved)
+        return str((repo_root / candidate).resolve())
+
     def __init__(self, service_account_file: Optional[str] = None, endpoint: Optional[str] = None):
         settings = get_settings()
-        self.sa_file = service_account_file or settings.google_route_optimization_service_account_file
+        raw_sa_file = service_account_file or settings.google_route_optimization_service_account_file
+        self.sa_file = self._resolve_service_account_path(raw_sa_file)
         self.endpoint = endpoint or settings.google_route_optimization_endpoint
         self.project_id = getattr(settings, "google_route_optimization_project_id", None) or os.getenv("GOOGLE_ROUTE_OPTIMIZATION_PROJECT_ID")
         self.location = getattr(settings, "google_route_optimization_location", "us-central1")
@@ -78,6 +97,66 @@ class GoogleRouteOptimizationService:
             if seconds is not None:
                 return int(seconds)
         return None
+
+    def _build_shipment_lookup(self, waypoints: List[Dict[str, float]]) -> Dict[str, int]:
+        lookup: Dict[str, int] = {}
+        for index, point in enumerate(waypoints):
+            label = point.get("label") or f"shipment-{index}"
+            if label in lookup:
+                raise RuntimeError(f"Google Route Optimization request contains duplicate shipment labels: {label}")
+            lookup[label] = index
+        return lookup
+
+    def _rebuild_visit_order(self, visits: List[Dict[str, Any]], waypoints: List[Dict[str, float]], *, skipped_shipments: Any = None) -> list[int]:
+        if skipped_shipments not in (None, [], {}, 0):
+            if isinstance(skipped_shipments, int):
+                if skipped_shipments > 0:
+                    raise RuntimeError(f"Google Route Optimization returned skippedShipments={skipped_shipments}; request requires all shipments to be assigned.")
+            elif isinstance(skipped_shipments, list) and skipped_shipments:
+                raise RuntimeError("Google Route Optimization returned skipped shipments; request requires all shipments to be assigned.")
+            elif isinstance(skipped_shipments, dict) and skipped_shipments:
+                raise RuntimeError("Google Route Optimization returned skipped shipments; request requires all shipments to be assigned.")
+
+        shipment_lookup = self._build_shipment_lookup(waypoints)
+        order: list[int] = []
+        seen: set[int] = set()
+
+        for visit in visits:
+            if not isinstance(visit, dict):
+                continue
+            if visit.get("isPickup"):
+                continue
+
+            shipment_index_value = visit.get("shipmentIndex")
+            if "shipmentIndex" in visit:
+                try:
+                    shipment_index = int(shipment_index_value)
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError("Google Route Optimization returned an invalid shipmentIndex value.") from exc
+            else:
+                shipment_label = visit.get("shipmentLabel")
+                if shipment_label is None:
+                    raise RuntimeError("Google Route Optimization visit is missing both shipmentIndex and shipmentLabel; ProtoJSON omitted a zero-value scalar.")
+                matches = [index for label, index in shipment_lookup.items() if label == shipment_label]
+                if len(matches) == 1:
+                    shipment_index = matches[0]
+                elif not matches:
+                    raise RuntimeError(f"Google Route Optimization visit references unknown shipmentLabel '{shipment_label}'.")
+                else:
+                    raise RuntimeError(f"Google Route Optimization visit references ambiguous shipmentLabel '{shipment_label}'.")
+
+            if shipment_index not in range(len(waypoints)):
+                raise RuntimeError(f"Google Route Optimization returned shipmentIndex {shipment_index} outside expected range 0..{len(waypoints)-1}.")
+            if shipment_index in seen:
+                raise RuntimeError(f"Google Route Optimization returned duplicate shipmentIndex {shipment_index}.")
+            seen.add(shipment_index)
+            order.append(shipment_index)
+
+        if len(order) != len(waypoints):
+            raise RuntimeError("Google Route Optimization returned an incomplete visit sequence.")
+        if set(order) != set(range(len(waypoints))):
+            raise RuntimeError("Google Route Optimization returned a non-complete shipment sequence.")
+        return order
 
     def _compute_routes_response(self, origin: Optional[Dict[str, float]], destination: Optional[Dict[str, float]], waypoints: List[Dict[str, float]]) -> Dict[str, Any]:
         if not self.api_key:
@@ -154,20 +233,16 @@ class GoogleRouteOptimizationService:
         url = self.OPTIMIZE_TOURS_URL.format(project_id=self.project_id)
         response = httpx.post(url, json=body, headers=headers, timeout=30)
         response.raise_for_status()
-        routes = response.json().get("routes") or []
-        visits = routes[0].get("visits") if routes else None
+        payload = response.json()
+        routes = payload.get("routes") or []
+        if not routes:
+            raise RuntimeError("Google Route Optimization returned no routes")
+        route = routes[0]
+        visits = route.get("visits") if isinstance(route, dict) else None
         if not isinstance(visits, list):
             raise RuntimeError("Google Route Optimization returned no visits")
-        order = []
-        for visit in visits:
-            if not isinstance(visit, dict) or visit.get("isPickup"):
-                continue
-            shipment_index = visit.get("shipmentIndex")
-            if shipment_index is not None:
-                order.append(int(shipment_index))
-        if sorted(order) != list(range(len(waypoints))):
-            raise RuntimeError("Google Route Optimization returned an incomplete visit sequence")
-        return order
+        skipped_payload = route.get("skippedShipments")
+        return self._rebuild_visit_order(visits, waypoints, skipped_shipments=skipped_payload)
 
     def optimize_route(self,
                        origin: Optional[Dict[str, float]],
