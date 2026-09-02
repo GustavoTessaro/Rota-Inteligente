@@ -353,17 +353,27 @@ class DeliveryApp:
         if route.get("alternativas_equivalentes"):
             controls.append(ft.Text("As opções mais rápida e mais curta resultaram equivalentes.", color=ft.Colors.GREY_700))
 
+        route_entries_by_id = {
+            entry.get("id"): entry
+            for entry in route.get("entregas") or []
+            if entry.get("id") is not None
+        }
         cards = []
         for alternative in alternatives[:1] if route.get("alternativas_equivalentes") else alternatives:
             criterion = alternative.get("criterio", "").replace("MAIS_", "Mais ").title()
             duration = float(alternative.get("duracao_prevista") or 0) * 60
             distance = float(alternative.get("distancia_prevista") or 0)
             sequence = alternative.get("sequencia") or []
-            labels = [f"#{item}" for item in sequence]
+            labels = []
+            for position, route_entry_id in enumerate(sequence, start=1):
+                route_entry = route_entries_by_id.get(route_entry_id) or {}
+                cliente = route_entry.get("cliente") or {}
+                cliente_nome = cliente.get("nome") if isinstance(cliente, dict) else None
+                labels.append(f"{position}. {cliente_nome or f'Parada {position}'}")
             details = [
                 ft.Text(criterion, weight=ft.FontWeight.BOLD),
                 ft.Text(f"{duration:.0f} min · {distance:.2f} km"),
-                ft.Text(f"Sequência: {' -> '.join(labels) if labels else '-'}", size=12),
+                ft.Text(f"Sequência: {' → '.join(labels) if labels else '-'}", size=12),
             ]
             if alternative.get("recomendada"):
                 details.append(ft.Text("Recomendada pelo gestor", color=ft.Colors.INDIGO, weight=ft.FontWeight.BOLD))
