@@ -17,6 +17,7 @@ BACKEND_VENV = BACKEND_DIR / ".venv"
 ROOT_VENV = ROOT / ".venv"
 BACKEND_PYTHON = BACKEND_VENV / "Scripts" / "python.exe"
 FLET_EXE = ROOT_VENV / "Scripts" / "flet.exe"
+BACKEND_ENV = BACKEND_DIR / ".env"
 BACKEND_HOST = "0.0.0.0"
 BACKEND_PORT = 8000
 BACKEND_HEALTH_URL = "http://127.0.0.1:8000/health"
@@ -175,10 +176,30 @@ def cleanup(frontend: subprocess.Popen | None, backend: subprocess.Popen | None)
     stop_process(backend, "backend")
 
 
+def read_client_maptiler_key() -> str | None:
+    if not BACKEND_ENV.is_file():
+        return None
+    try:
+        for line in BACKEND_ENV.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            key, separator, value = stripped.partition("=")
+            if separator and key.strip() == "MAPTILER_API_KEY":
+                return value.strip().strip('"').strip("'")
+    except OSError:
+        return None
+    return None
+
+
 def build_environment() -> dict[str, str]:
     environment = os.environ.copy()
     environment["API_BASE_URL"] = DESKTOP_API_BASE_URL
     environment["ROTA_DESKTOP_LOCAL"] = "1"
+    if "MAPTILER_API_KEY" not in environment:
+        maptiler_key = read_client_maptiler_key()
+        if maptiler_key is not None:
+            environment["MAPTILER_API_KEY"] = maptiler_key
     return environment
 
 
