@@ -6,6 +6,7 @@ pydantic-settings>=2.5,<3
 PyJWT>=2.9,<3
 pwdlib[argon2]>=0.2,<1
 pymysql>=1.1,<2
+psycopg[binary]>=3,<4
 python-multipart>=0.0.9,<1
 email-validator>=2.2,<3
 pytest>=8,<9
