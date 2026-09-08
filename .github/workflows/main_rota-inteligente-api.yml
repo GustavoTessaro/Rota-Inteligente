@@ -67,10 +67,8 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_46E96C4B9EAE4C9FBE8E656F19E58AB1 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_E4CFFA582901472C95073C73DAB6C37F }}
 
-      - name: 'Deploy to Azure Web App'
+      - name: Deploy backend to Azure App Service
         uses: azure/webapps-deploy@v3
-        id: deploy-to-webapp
         with:
-          app-name: 'rota-inteligente-api'
-          slot-name: 'Production'
-          
+          app-name: rota-inteligente-api
+          package: ${{ runner.temp }}/rota-inteligente-api
