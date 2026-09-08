@@ -7,6 +7,12 @@ from app.database import SessionLocal
 from app.models import Cliente, Endereco, Organizacao, Pedido, Rota, Usuario, Veiculo
 
 
+DEMO_ROUTE_NAMES = {
+    "Rota Demonstração - Escolha Rápida",
+    "Rota Demonstração - Escolha Curta",
+}
+
+
 def _fake_geocode(db, address):
     address.latitude = Decimal("-27.815000")
     address.longitude = Decimal("-50.325000")
@@ -43,7 +49,10 @@ def test_prepare_homologacao_creates_expected_scenario(monkeypatch, client):
         assert {customer.nome for customer in customers} == {"Martendal", "Mezzalira", "IFSC"}
         assert len(orders) == 3
         assert all(order.status.value == "ABERTO" for order in orders)
-        assert db.scalar(select(Rota.id)) is None
+        demo_routes = db.scalars(select(Rota).where(Rota.nome.in_(DEMO_ROUTE_NAMES))).all()
+        assert {route.nome for route in demo_routes} == DEMO_ROUTE_NAMES
+        assert all(route.status.value == "PRONTA" for route in demo_routes)
+        assert db.scalar(select(Rota.id).where(Rota.nome.like("Rota Homologação%"))) is None
 
         expected_addresses = {
             "Martendal": ("Rua São Joaquim", "1079", "Copacabana", "88504-011"),
@@ -81,7 +90,10 @@ def test_prepare_homologacao_is_idempotent(monkeypatch, client):
         assert db.scalar(select(Pedido.id).where(Pedido.numero_pedido == "PED-HOMOLOGACAO-MARTENDAL")) is not None
         assert db.scalar(select(Pedido.id).where(Pedido.numero_pedido == "PED-HOMOLOGACAO-MEZZALIRA")) is not None
         assert db.scalar(select(Pedido.id).where(Pedido.numero_pedido == "PED-HOMOLOGACAO-IFSC")) is not None
-        assert db.scalar(select(Rota.id)) is None
+        demo_routes = db.scalars(select(Rota).where(Rota.nome.in_(DEMO_ROUTE_NAMES))).all()
+        assert {route.nome for route in demo_routes} == DEMO_ROUTE_NAMES
+        assert all(route.status.value == "PRONTA" for route in demo_routes)
+        assert db.scalar(select(Rota.id).where(Rota.nome.like("Rota Homologação%"))) is None
         assert db.scalar(select(Endereco.id).where(Endereco.cliente_id.is_not(None))) is not None
 
         customer_count = db.query(Cliente).filter(Cliente.nome.in_(["Martendal", "Mezzalira", "IFSC"])).count()
