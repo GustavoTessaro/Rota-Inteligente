@@ -7,6 +7,7 @@ Create Date: 2026-08-05
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision = "0004_create_rotas"
@@ -24,6 +25,11 @@ tipo_evento_rota = sa.Enum(
     "PARTIDA", "PAUSA", "RETOMADA", "ABASTECIMENTO", "DESVIO",
     "MANUTENCAO", "ENTREGA_REALIZADA", "ENTREGA_FALHOU", "FINALIZADA",
     name="tipoeventorota",
+)
+prioridade = postgresql.ENUM(
+    "BAIXA", "NORMAL", "ALTA", "URGENTE",
+    name="prioridade",
+    create_type=False,
 )
 
 
@@ -71,7 +77,7 @@ def upgrade():
         sa.Column("entrega_id", sa.Integer(), sa.ForeignKey("entregas.id"), nullable=False),
         sa.Column("ordem_visita", sa.Integer(), nullable=False),
         sa.Column("sequencia_otimizada", sa.Integer()),
-        sa.Column("prioridade", sa.Enum("BAIXA", "NORMAL", "ALTA", "URGENTE", name="prioridade")),
+        sa.Column("prioridade", prioridade),
         sa.Column("janela_inicio", sa.DateTime()),
         sa.Column("janela_fim", sa.DateTime()),
         sa.Column("tempo_estacionamento", sa.Integer()),

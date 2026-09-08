@@ -1,19 +1,175 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
+import json
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import (
     Cliente, Endereco, Entrega, HistoricoEntrega, Organizacao, Pedido, PedidoItem,
-    Perfil, Prioridade, Produto, StatusEntrega, StatusVeiculo, TipoVeiculo, Usuario, Veiculo,
-    Rota, RotaEntrega, RotaHistorico, StatusRota, TipoEventoRota,
+    CriterioAlternativaRota, Perfil, Prioridade, Produto, StatusEntrega, StatusVeiculo,
+    TipoVeiculo, Usuario, Veiculo, Rota, RotaAlternativa, RotaEntrega, RotaHistorico,
+    StatusRota, TipoEventoRota,
 )
 from .security import hash_password
 
 
+DEMO_ROUTE_NAMES = (
+    "Rota Demonstração - Escolha Rápida",
+    "Rota Demonstração - Escolha Curta",
+)
+
+
+def _ensure_demo_route(
+    db: Session,
+    *,
+    name: str,
+    organization: Organizacao,
+    driver: Usuario,
+    vehicle: Veiculo,
+    deliveries: list[Entrega],
+    recommended_criterion: CriterioAlternativaRota,
+    selected_criterion: CriterioAlternativaRota,
+    distance_fast: str,
+    duration_fast: str,
+    distance_short: str,
+    duration_short: str,
+) -> Rota:
+    route = db.scalar(select(Rota).where(Rota.nome == name))
+    if route is None:
+        route = Rota(
+            nome=name,
+            descricao="Rota demonstrativa do fluxo de alternativas",
+            organizacao_id=organization.id,
+            veiculo_id=vehicle.id,
+            motorista_id=driver.id,
+            status=StatusRota.PRONTA,
+            data_planejada=datetime.now(),
+            origem_endereco_id=organization.endereco_id,
+            destino_endereco_id=deliveries[-1].endereco_destino_id,
+            distancia_prevista=Decimal(distance_fast),
+            duracao_prevista=Decimal(duration_fast),
+            progresso_percentual=0,
+        )
+        db.add(route)
+        db.flush()
+
+    existing_delivery_ids = {entry.entrega_id for entry in route.entregas}
+    for order, delivery in enumerate(deliveries, start=1):
+        if delivery.id not in existing_delivery_ids:
+            db.add(RotaEntrega(rota=route, entrega_id=delivery.id, ordem_visita=order, sequencia_otimizada=order))
+    db.flush()
+
+    alternative_data = {
+        CriterioAlternativaRota.MAIS_RAPIDA: (distance_fast, duration_fast),
+        CriterioAlternativaRota.MAIS_CURTA: (distance_short, duration_short),
+    }
+    alternatives = {}
+    for criterion, (distance, duration) in alternative_data.items():
+        alternative = db.scalar(
+            select(RotaAlternativa).where(
+                RotaAlternativa.rota_id == route.id,
+                RotaAlternativa.criterio == criterion,
+            )
+        )
+        if alternative is None:
+            alternative = RotaAlternativa(
+                rota_id=route.id,
+                criterio=criterion,
+                distancia_prevista=Decimal(distance),
+                duracao_prevista=Decimal(duration),
+                sequencia_json=json.dumps([delivery.id for delivery in deliveries]),
+            )
+            db.add(alternative)
+            db.flush()
+        alternatives[criterion] = alternative
+
+    recommended = alternatives[recommended_criterion]
+    selected = alternatives[selected_criterion]
+    route.alternativa_recomendada_id = recommended.id
+    route.alternativa_escolhida_id = selected.id
+    route.alternativa_escolhida_por = driver.id
+    route.alternativa_escolhida_em = datetime.now()
+    route.status = StatusRota.PRONTA
+
+    recommended_history_exists = db.scalar(
+        select(RotaHistorico.id).where(
+            RotaHistorico.rota_id == route.id,
+            RotaHistorico.evento == TipoEventoRota.ALTERNATIVA_RECOMENDADA,
+        )
+    )
+    selected_history_exists = db.scalar(
+        select(RotaHistorico.id).where(
+            RotaHistorico.rota_id == route.id,
+            RotaHistorico.evento == TipoEventoRota.ALTERNATIVA_SELECIONADA,
+        )
+    )
+    if recommended_history_exists is None:
+        db.add(RotaHistorico(
+            rota_id=route.id,
+            evento=TipoEventoRota.ALTERNATIVA_RECOMENDADA,
+            status_novo=StatusRota.PRONTA.value,
+            observacao=f"Alternativa {recommended.criterio.value} recomendada",
+            alterado_por=driver.id,
+        ))
+    if selected_history_exists is None:
+        db.add(RotaHistorico(
+            rota_id=route.id,
+            evento=TipoEventoRota.ALTERNATIVA_SELECIONADA,
+            status_novo=StatusRota.PRONTA.value,
+            observacao=f"Alternativa {selected.criterio.value} selecionada",
+            alterado_por=driver.id,
+        ))
+    return route
+
+
+def _ensure_demo_routes(db: Session) -> None:
+    organization = db.scalar(select(Organizacao).order_by(Organizacao.id))
+    driver = db.scalar(select(Usuario).where(Usuario.email == "motorista1@sistema.com"))
+    vehicle = db.scalar(select(Veiculo).where(Veiculo.placa == "ABC1234"))
+    deliveries = db.scalars(
+        select(Entrega)
+        .where(Entrega.status == StatusEntrega.AGUARDANDO_COLETA)
+        .order_by(Entrega.id)
+        .limit(3)
+    ).all()
+    if organization is None or driver is None or vehicle is None or len(deliveries) < 3:
+        return
+
+    _ensure_demo_route(
+        db,
+        name=DEMO_ROUTE_NAMES[0],
+        organization=organization,
+        driver=driver,
+        vehicle=vehicle,
+        deliveries=deliveries[:2],
+        recommended_criterion=CriterioAlternativaRota.MAIS_RAPIDA,
+        selected_criterion=CriterioAlternativaRota.MAIS_RAPIDA,
+        distance_fast="12.40",
+        duration_fast="0.80",
+        distance_short="10.70",
+        duration_short="1.10",
+    )
+    _ensure_demo_route(
+        db,
+        name=DEMO_ROUTE_NAMES[1],
+        organization=organization,
+        driver=driver,
+        vehicle=vehicle,
+        deliveries=deliveries[2:],
+        recommended_criterion=CriterioAlternativaRota.MAIS_RAPIDA,
+        selected_criterion=CriterioAlternativaRota.MAIS_CURTA,
+        distance_fast="8.60",
+        duration_fast="0.60",
+        distance_short="7.90",
+        duration_short="0.90",
+    )
+    db.commit()
+
+
 def seed_database(db: Session) -> None:
     if db.scalar(select(Usuario.id).limit(1)):
+        _ensure_demo_routes(db)
         return
 
     users = [
@@ -173,3 +329,4 @@ def seed_database(db: Session) -> None:
         ))
     db.flush()
     db.commit()
+    _ensure_demo_routes(db)
