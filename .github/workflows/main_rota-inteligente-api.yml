@@ -98,9 +98,9 @@ jobs:
       - name: Azure login with OpenID Connect
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_ECF419DA505B41C78A9BCA73A8538300 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_46E96C4B9EAE4C9FBE8E656F19E58AB1 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_E4CFFA582901472C95073C73DAB6C37F }}
 
       - name: Deploy backend to Azure App Service
         uses: azure/webapps-deploy@v3
