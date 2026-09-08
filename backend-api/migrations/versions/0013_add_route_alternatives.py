@@ -16,8 +16,8 @@ depends_on = None
 
 def upgrade():
     criterio = sa.Enum(
-        "MAIS_RAPIDA", "MAIS_CURTA", name="criterioalternativarota",
-        native_enum=False, create_constraint=True,
+        "MAIS_RAPIDA", "MAIS_CURTA", name="ck_rota_alternativas_criterio",
+        native_enum=False, create_constraint=True, length=32,
     )
     op.create_table(
         "rota_alternativas",
@@ -57,4 +57,4 @@ def downgrade():
             batch.drop_column(name)
     op.drop_index("ix_rota_alternativas_rota_id", table_name="rota_alternativas")
     op.drop_table("rota_alternativas")
-    sa.Enum(name="criterioalternativarota").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="ck_rota_alternativas_criterio").drop(op.get_bind(), checkfirst=True)

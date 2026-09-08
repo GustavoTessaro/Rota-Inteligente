@@ -16,19 +16,21 @@ depends_on = None
 
 
 status_rota = sa.Enum(
-    "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO", "PRONTA",
-    "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
-    name="statusrota", native_enum=False, create_constraint=True,
+    "RASCUNHO", "OTIMIZANDO", "PRONTA", "AGUARDANDO_ACEITE",
+    "EM_EXECUCAO", "PAUSADA", "CONCLUIDA", "CANCELADA", "PLANEJADA",
+    "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO", "FINALIZADA",
+    name="ck_rotas_status", native_enum=False, create_constraint=True, length=32,
 )
 tipo_evento_rota = sa.Enum(
     "PARTIDA", "PAUSA", "RETOMADA", "ABASTECIMENTO", "DESVIO",
     "MANUTENCAO", "ENTREGA_REALIZADA", "ENTREGA_FALHOU", "FINALIZADA",
-    name="tipoeventorota", native_enum=False, create_constraint=True,
+    "CANCELAMENTO", "ALTERNATIVA_RECOMENDADA", "ALTERNATIVA_SELECIONADA",
+    name="ck_rota_historico_evento", native_enum=False, create_constraint=True, length=32,
 )
 prioridade = sa.Enum(
     "BAIXA", "NORMAL", "ALTA", "URGENTE",
-    name="prioridade",
-    native_enum=False, create_constraint=True,
+    name="ck_rota_entregas_prioridade",
+    native_enum=False, create_constraint=True, length=32,
 )
 
 

@@ -15,12 +15,12 @@ branch_labels = None
 depends_on = None
 
 
-perfil = sa.Enum("ADMIN", "GESTOR", "MOTORISTA", "CLIENTE", name="perfil", native_enum=False, create_constraint=True)
-status_pedido = sa.Enum("ABERTO", "EM_PROCESSAMENTO", "FINALIZADO", "CANCELADO", name="statuspedido", native_enum=False, create_constraint=True)
-prioridade = sa.Enum("BAIXA", "NORMAL", "ALTA", "URGENTE", name="prioridade", native_enum=False, create_constraint=True)
+perfil = sa.Enum("ADMIN", "GESTOR", "MOTORISTA", "CLIENTE", name="ck_usuarios_perfil", native_enum=False, create_constraint=True, length=32)
+status_pedido = sa.Enum("ABERTO", "EM_PROCESSAMENTO", "FINALIZADO", "CANCELADO", name="ck_pedidos_status", native_enum=False, create_constraint=True, length=32)
+prioridade = sa.Enum("BAIXA", "NORMAL", "ALTA", "URGENTE", name="ck_pedidos_prioridade", native_enum=False, create_constraint=True, length=32)
 status_entrega = sa.Enum(
     "AGUARDANDO_COLETA", "COLETADA", "EM_ROTA", "ENTREGUE", "NAO_ENTREGUE", "CANCELADA",
-    name="statusentrega", native_enum=False, create_constraint=True,
+    name="ck_entregas_status", native_enum=False, create_constraint=True, length=32,
 )
 
 
