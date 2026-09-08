@@ -17,11 +17,11 @@ depends_on = None
 
 tipo_veiculo = sa.Enum(
     "CARRO", "VAN", "UTILITARIO", "CAMINHAO", "CARRETA", "OUTRO",
-    name="tipoveiculo",
+    name="tipoveiculo", native_enum=False, create_constraint=True,
 )
 status_veiculo = sa.Enum(
     "DISPONIVEL", "EM_ROTTA", "MANUTENCAO",
-    name="statusveiculo",
+    name="statusveiculo", native_enum=False, create_constraint=True,
 )
 
 

@@ -60,12 +60,12 @@ def validate_database_url(app_env: str, database_url: str | None) -> str:
     if app_env != "production":
         return value
     if not value:
-        raise ValueError("DATABASE_URL é obrigatória em production e deve apontar para PostgreSQL.")
+        raise ValueError("DATABASE_URL é obrigatória em production e deve apontar para SQL Server/Azure SQL.")
     if value.startswith("sqlite:"):
-        raise ValueError("DATABASE_URL não pode usar SQLite em production; configure PostgreSQL.")
+        raise ValueError("DATABASE_URL não pode usar SQLite em production; configure SQL Server/Azure SQL.")
     parsed = urlsplit(value)
-    if parsed.scheme != "postgresql+psycopg" or not parsed.hostname:
-        raise ValueError("DATABASE_URL inválida em production; use uma URL PostgreSQL válida.")
+    if parsed.scheme not in {"mssql+pyodbc", "postgresql+psycopg"} or not parsed.hostname:
+        raise ValueError("DATABASE_URL inválida em production; use uma URL mssql+pyodbc ou PostgreSQL válida.")
     return value
 
 

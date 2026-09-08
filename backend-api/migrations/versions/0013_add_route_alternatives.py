@@ -15,14 +15,10 @@ depends_on = None
 
 
 def upgrade():
-    bind = op.get_bind()
-    if bind.dialect.name == "postgresql":
-        op.execute("ALTER TYPE tipoeventorota ADD VALUE IF NOT EXISTS 'ALTERNATIVA_RECOMENDADA'")
-        op.execute("ALTER TYPE tipoeventorota ADD VALUE IF NOT EXISTS 'ALTERNATIVA_SELECIONADA'")
-    elif bind.dialect.name == "mysql":
-        op.execute("ALTER TABLE rota_historico MODIFY evento ENUM('PARTIDA','PAUSA','RETOMADA','ABASTECIMENTO','DESVIO','MANUTENCAO','ENTREGA_REALIZADA','ENTREGA_FALHOU','FINALIZADA','CANCELAMENTO','ALTERNATIVA_RECOMENDADA','ALTERNATIVA_SELECIONADA') NOT NULL")
-
-    criterio = sa.Enum("MAIS_RAPIDA", "MAIS_CURTA", name="criterioalternativarota")
+    criterio = sa.Enum(
+        "MAIS_RAPIDA", "MAIS_CURTA", name="criterioalternativarota",
+        native_enum=False, create_constraint=True,
+    )
     op.create_table(
         "rota_alternativas",
         sa.Column("id", sa.Integer(), primary_key=True),

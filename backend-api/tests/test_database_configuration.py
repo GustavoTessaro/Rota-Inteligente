@@ -30,15 +30,23 @@ def test_production_normalizes_postgresql_url():
     )
 
 
+def test_production_accepts_sql_server_url():
+    url = (
+        "mssql+pyodbc://user:password@rota-inteligente.database.windows.net:1433/"
+        "rota-inteligente-db?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes"
+    )
+    assert validate_database_url("production", url) == url
+
+
 def test_postgresql_scheme_normalization_preserves_psycopg_url():
     url = "postgresql+psycopg://user:password@db:5432/app"
     assert normalize_database_url(url) == url
 
 
-def test_psycopg3_is_importable():
-    import psycopg
+def test_pyodbc_is_importable():
+    import pyodbc
 
-    assert tuple(int(part) for part in psycopg.__version__.split(".")[:2]) >= (3, 0)
+    assert tuple(int(part) for part in pyodbc.version.split(".")[:2]) >= (5, 0)
 
 
 def test_production_lifespan_skips_create_all_and_seed(monkeypatch):

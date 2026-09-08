@@ -7,7 +7,6 @@ Create Date: 2026-08-05
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 
 revision = "0004_create_rotas"
@@ -19,17 +18,17 @@ depends_on = None
 status_rota = sa.Enum(
     "PLANEJADA", "AGUARDANDO_MOTORISTA", "AGUARDANDO_VEICULO", "PRONTA",
     "EM_EXECUCAO", "PAUSADA", "FINALIZADA", "CANCELADA",
-    name="statusrota",
+    name="statusrota", native_enum=False, create_constraint=True,
 )
 tipo_evento_rota = sa.Enum(
     "PARTIDA", "PAUSA", "RETOMADA", "ABASTECIMENTO", "DESVIO",
     "MANUTENCAO", "ENTREGA_REALIZADA", "ENTREGA_FALHOU", "FINALIZADA",
-    name="tipoeventorota",
+    name="tipoeventorota", native_enum=False, create_constraint=True,
 )
-prioridade = postgresql.ENUM(
+prioridade = sa.Enum(
     "BAIXA", "NORMAL", "ALTA", "URGENTE",
     name="prioridade",
-    create_type=False,
+    native_enum=False, create_constraint=True,
 )
 
 

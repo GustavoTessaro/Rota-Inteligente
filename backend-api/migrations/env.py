@@ -1,7 +1,7 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool, text
+from sqlalchemy import Column, MetaData, String, Table, engine_from_config, inspect, pool
 
 from app.config import settings
 from app.database import Base
@@ -18,47 +18,16 @@ target_metadata = Base.metadata
 
 
 def ensure_alembic_version_table(connection) -> None:
-    """Ensure Alembic keeps a version_num long enough for historical revisions.
-
-    Alembic's default PostgreSQL version table uses String(32), which is too short
-    for revision IDs already present in this project (for example
-    0008_add_organizacao_id_to_pedidos). New databases must be created with a
-    wider column, and legacy PostgreSQL databases must be widened before the next
-    migration records a longer revision ID.
-    """
-    if connection.dialect.name != "postgresql":
+    """Create a portable version table wide enough for this revision history."""
+    if inspect(connection).has_table("alembic_version"):
         return
-
-    connection.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS alembic_version (
-                version_num VARCHAR(128) NOT NULL,
-                PRIMARY KEY (version_num)
-            )
-            """
-        )
+    metadata = MetaData()
+    version_table = Table(
+        "alembic_version",
+        metadata,
+        Column("version_num", String(128), nullable=False, primary_key=True),
     )
-
-    connection.execute(
-        text(
-            """
-            DO $$
-            BEGIN
-                IF EXISTS (
-                    SELECT 1
-                    FROM information_schema.columns
-                    WHERE table_schema = current_schema()
-                      AND table_name = 'alembic_version'
-                      AND column_name = 'version_num'
-                ) THEN
-                    ALTER TABLE alembic_version
-                    ALTER COLUMN version_num TYPE VARCHAR(128);
-                END IF;
-            END $$;
-            """
-        )
-    )
+    version_table.create(connection)
 
 
 def run_migrations_offline():
