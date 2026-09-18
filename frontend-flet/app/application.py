@@ -1,4 +1,5 @@
 ﻿from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import quote
 import math
 
@@ -25,6 +26,7 @@ from .tracking_client import build_marker, update_vehicle_state
 
 
 TRACKING_STALE_AFTER_SECONDS = 45
+LOGIN_LOGO_PATH = Path(__file__).resolve().parent.parent / "imagens" / "Logo ROTA INTELIGENTE_transparente.png"
 
 
 STATUS_COLORS = {
@@ -524,14 +526,25 @@ class DeliveryApp:
             except ApiError as exc:
                 self.notify(str(exc), True)
 
+        logo_control = (
+            ft.Image(
+                src=str(LOGIN_LOGO_PATH),
+                width=110,
+                height=110,
+                fit=ft.ImageFit.CONTAIN,
+            )
+            if LOGIN_LOGO_PATH.exists()
+            else ft.Icon(ft.Icons.LOCAL_SHIPPING, size=70, color=ft.Colors.INDIGO)
+        )
+
         self.page.clean()
         self.page.add(
             ft.Container(
                 content=ft.Column(
                     [
-                        ft.Icon(ft.Icons.LOCAL_SHIPPING, size=70, color=ft.Colors.INDIGO),
-                        ft.Text("Gestão de Entregas", size=28, weight=ft.FontWeight.BOLD),
-                        ft.Text("Acesse sua operação", color=ft.Colors.GREY_700),
+                        logo_control,
+                        #ft.Text("Gestão de Entregas", size=28, weight=ft.FontWeight.BOLD),
+                        ft.Text("Acesse sua operação:", color=ft.Colors.GREY_700, weight=ft.FontWeight.BOLD),
                         email, password,
                         ft.FilledButton("Entrar", icon=ft.Icons.LOGIN, on_click=submit, height=48),
                     ],
