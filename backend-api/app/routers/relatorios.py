@@ -1,3 +1,4 @@
+#routers/relatorios.py
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
@@ -5,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Entrega, Pedido, Perfil, Rota, RotaEntrega, StatusEntrega, StatusRota, StatusVeiculo, Usuario, Veiculo
+from ..models import Entrega, Organizacao, Pedido, Perfil, Rota, RotaEntrega, StatusEntrega, StatusRota, StatusVeiculo, Usuario, Veiculo
 from ..schemas import DashboardOut
 from ..security import current_user
 from ..deps import report_organization_scope
@@ -152,4 +153,104 @@ def delivery_report(
     if status:
         stmt = stmt.where(Entrega.status == status)
     rows = db.scalars(stmt.order_by(Entrega.criado_em.desc())).all()
-    return {"total": len(rows), "entregas": rows}
+
+    terminal_statuses = {StatusEntrega.ENTREGUE, StatusEntrega.NAO_ENTREGUE, StatusEntrega.CANCELADA}
+    now = datetime.now()
+    atrasadas = sum(
+        1
+        for delivery in rows
+        if delivery.previsao_entrega is not None
+        and delivery.previsao_entrega < now
+        and delivery.status not in terminal_statuses
+    )
+    em_dia = sum(
+        1
+        for delivery in rows
+        if delivery.previsao_entrega is not None
+        and delivery.previsao_entrega >= now
+        and delivery.status not in terminal_statuses
+    )
+    entregas_por_status = [
+        {"status": current_status.value, "quantidade": sum(1 for delivery in rows if delivery.status == current_status)}
+        for current_status in StatusEntrega
+    ]
+    entregas_por_motorista = []
+    driver_totals = {}
+    for delivery in rows:
+        if delivery.entregador_id is None:
+            continue
+        driver_totals[delivery.entregador_id] = driver_totals.get(delivery.entregador_id, 0) + 1
+    if driver_totals:
+        drivers = db.execute(
+            select(Usuario.id, Usuario.nome).where(Usuario.id.in_(list(driver_totals.keys())))
+        ).all()
+        driver_names = {driver_id: nome for driver_id, nome in drivers}
+        entregas_por_motorista = [
+            {
+                "motorista_id": driver_id,
+                "motorista": driver_names.get(driver_id, f"Motorista #{driver_id}"),
+                "quantidade": quantity,
+            }
+            for driver_id, quantity in sorted(driver_totals.items(), key=lambda item: (-item[1], item[0]))
+        ]
+
+    entregas_por_organizacao = []
+    organization_totals = {}
+    organization_statuses = {}
+    for delivery in rows:
+        if delivery.pedido is None or delivery.pedido.organizacao_id is None:
+            continue
+        organization_id = delivery.pedido.organizacao_id
+        organization_totals[organization_id] = organization_totals.get(organization_id, set())
+        organization_totals[organization_id].add(delivery.pedido_id)
+        organization_statuses.setdefault(organization_id, {})
+        organization_statuses[organization_id][delivery.status] = organization_statuses[organization_id].get(delivery.status, 0) + 1
+    if organization_totals:
+        organization_names = {
+            organization_id: name
+            for organization_id, name in db.execute(
+                select(Organizacao.id, Organizacao.nome).where(Organizacao.id.in_(list(organization_totals.keys())))
+            ).all()
+        }
+        entregas_por_organizacao = [
+            {
+                "organizacao_id": organization_id,
+                "organizacao": organization_names.get(organization_id, f"Organização #{organization_id}"),
+                "quantidade_total_pedidos": len(pedido_ids),
+                "distribuicao_por_status": [
+                    {"status": status.value, "quantidade": quantity}
+                    for status, quantity in sorted(
+                        organization_statuses.get(organization_id, {}).items(),
+                        key=lambda item: (-item[1], item[0].value if hasattr(item[0], "value") else str(item[0]))
+                    )
+                ],
+            }
+            for organization_id, pedido_ids in sorted(
+                organization_totals.items(),
+                key=lambda item: (-len(item[1]), item[0]),
+            )
+        ]
+
+    intervalos_eligiveis = [
+        (delivery.data_entrega - delivery.data_coleta).total_seconds() / 60
+        for delivery in rows
+        if delivery.data_coleta is not None
+        and delivery.data_entrega is not None
+        and delivery.data_entrega >= delivery.data_coleta
+    ]
+    tempo_medio_minutos = (
+        sum(intervalos_eligiveis) / len(intervalos_eligiveis)
+        if intervalos_eligiveis
+        else 0
+    )
+
+    return {
+        "total": len(rows),
+        "entregas": rows,
+        "entregas_atrasadas": atrasadas,
+        "entregas_em_dia": em_dia,
+        "entregas_por_status": entregas_por_status,
+        "entregas_por_motorista": entregas_por_motorista,
+        "entregas_por_organizacao": entregas_por_organizacao,
+        "tempo_medio_minutos": tempo_medio_minutos,
+    }

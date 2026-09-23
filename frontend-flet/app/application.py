@@ -1,4 +1,5 @@
-﻿from datetime import datetime, timezone
+﻿#frontend-flet/app/application.py
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 import math
@@ -27,6 +28,7 @@ from .tracking_client import build_marker, update_vehicle_state
 
 TRACKING_STALE_AFTER_SECONDS = 45
 LOGIN_LOGO_PATH = Path(__file__).resolve().parent.parent / "imagens" / "Logo ROTA INTELIGENTE_transparente.png"
+APP_TITLE_LOGO_PATH = Path(__file__).resolve().parent.parent / "imagens" / "Logo ROTA INTELIGENTE_transparente.png"
 
 
 STATUS_COLORS = {
@@ -95,9 +97,9 @@ class DeliveryApp:
         self.delivery_management_view()
 
     def start(self):
-        self.page.title = "Gestão de Entregas"
+        self.page.title = "Rota Inteligente" #window title
         self.page.theme_mode = ft.ThemeMode.LIGHT
-        self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.INDIGO)
+        self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.BLUE_900)
         self.page.padding = 0
         self.show_login()
 
@@ -646,7 +648,12 @@ class DeliveryApp:
             padding=12,
         )
         self.page.appbar = ft.AppBar(
-            title=ft.Text("Gestão de Entregas"),
+            title=ft.Image(
+                src=str(APP_TITLE_LOGO_PATH),
+                width=100,
+                height=30,
+                fit=ft.ImageFit.CONTAIN,
+            ),
             actions=[
                 self.connection_indicator,
                 ft.Container(ft.Text(f'{self.user["nome"]} · {self.user["perfil"]}'), padding=12),
@@ -740,8 +747,19 @@ class DeliveryApp:
                         ft.Text(label, size=12),
                         ft.Text(str(value), size=12, weight=ft.FontWeight.BOLD),
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.Container(height=14, width=width, bgcolor=ft.Colors.GREY_200, border_radius=7, padding=1,
-                                 content=ft.Container(width=bar_width, bgcolor=ft.Colors.INDIGO, border_radius=7)),
+                    ft.Container(
+                        width=width,
+                        height=2,
+                        bgcolor=ft.Colors.GREY_200,
+                        border_radius=999,
+                        alignment=ft.alignment.center_left,
+                        content=ft.Container(
+                            width=bar_width,
+                            height=2,
+                            bgcolor=ft.Colors.INDIGO,
+                            border_radius=999,
+                        ),
+                    ),
                 ], tight=True)
 
             status_items = data.get("entregas_por_status", [])
@@ -2783,6 +2801,7 @@ class DeliveryApp:
                 ft.Checkbox(
                     label=f"Pedido #{order['id']} — {order.get('numero_pedido') or '-'} — {cliente_nome} — {address_label}{status_label}{priority_label}",
                     value=(order['id'] in selected_order_ids),
+                    active_color=ft.Colors.BLUE_900,
                     on_change=lambda e, order_id=order["id"]: self._toggle_delivery_order(order_id, e.control.value),
                 )
             )
@@ -4964,6 +4983,159 @@ class DeliveryApp:
             report = load_report()
             if report is None:
                 return
+
+            total = int(report.get("total") or 0)
+            atrasadas = int(report.get("entregas_atrasadas") or 0)
+            em_dia = int(report.get("entregas_em_dia") or 0)
+            tempo_medio_minutos = float(report.get("tempo_medio_minutos") or 0)
+            status_items = report.get("entregas_por_status") or []
+            driver_items = report.get("entregas_por_motorista") or []
+            organization_items = report.get("entregas_por_organizacao") or []
+            max_status = max((int(item.get("quantidade", 0) or 0) for item in status_items), default=1)
+            max_driver = max((int(item.get("quantidade", 0) or 0) for item in driver_items), default=1)
+
+            def format_duration_minutes(value):
+                total_minutes = int(value or 0)
+                if total_minutes <= 0:
+                    return "0 min"
+                hours, minutes = divmod(total_minutes, 60)
+                if hours and minutes:
+                    return f"{hours}h {minutes}min"
+                if hours:
+                    return f"{hours}h"
+                return f"{minutes} min"
+
+            def build_status_bar(item):
+                label = str(item.get("status", "")).replace("_", " ").title()
+                quantity = int(item.get("quantidade", 0) or 0)
+                width = 440 if max_status > 0 else 50
+                bar_width = int((quantity / max_status) * width) if max_status > 0 else 0
+                return ft.Column([
+                    ft.Row([
+                        ft.Text(label, size=12),
+                        ft.Text(str(quantity), size=12, weight=ft.FontWeight.BOLD),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Container(
+                        width=width,
+                        height=2,
+                        bgcolor=ft.Colors.GREY_200,
+                        border_radius=999,
+                        alignment=ft.alignment.center_left,
+                        content=ft.Container(
+                            width=bar_width,
+                            height=2,
+                            bgcolor=ft.Colors.INDIGO,
+                            border_radius=999,
+                        ),
+                    ),
+                ], tight=True)
+
+            def build_driver_bar(item):
+                label = str(item.get("motorista") or item.get("motorista_id") or "Motorista")
+                quantity = int(item.get("quantidade", 0) or 0)
+                width = 440 if max_driver > 0 else 50
+                bar_width = int((quantity / max_driver) * width) if max_driver > 0 else 0
+                return ft.Column([
+                    ft.Row([
+                        ft.Text(label, size=12),
+                        ft.Text(str(quantity), size=12, weight=ft.FontWeight.BOLD),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Container(
+                        width=width,
+                        height=2,
+                        bgcolor=ft.Colors.GREY_200,
+                        border_radius=999,
+                        alignment=ft.alignment.center_left,
+                        content=ft.Container(
+                            width=bar_width,
+                            height=2,
+                            bgcolor=ft.Colors.ORANGE,
+                            border_radius=999,
+                        ),
+                    ),
+                ], tight=True)
+
+            cards = [
+                ft.Container(
+                    ft.Column([
+                        ft.Text("Entregas Totais", color=ft.Colors.GREY_700),
+                        ft.Text(str(total), size=28, weight=ft.FontWeight.BOLD),
+                    ], spacing=4),
+                    padding=18,
+                    width=220,
+                    border_radius=14,
+                    bgcolor=ft.Colors.INDIGO_50,
+                ),
+                ft.Container(
+                    ft.Column([
+                        ft.Text("Em Dia", color=ft.Colors.GREY_700),
+                        ft.Text(str(em_dia), size=28, weight=ft.FontWeight.BOLD),
+                    ], spacing=4),
+                    padding=18,
+                    width=220,
+                    border_radius=14,
+                    bgcolor=ft.Colors.GREEN_50,
+                ),
+                ft.Container(
+                    ft.Column([
+                        ft.Text("Com Atraso", color=ft.Colors.GREY_700),
+                        ft.Text(str(atrasadas), size=28, weight=ft.FontWeight.BOLD),
+                    ], spacing=4),
+                    padding=18,
+                    width=220,
+                    border_radius=14,
+                    bgcolor=ft.Colors.RED_50,
+                ),
+                ft.Container(
+                    ft.Column([
+                        ft.Text("Tempo Médio", color=ft.Colors.GREY_700),
+                        ft.Text(format_duration_minutes(tempo_medio_minutos), size=28, weight=ft.FontWeight.BOLD),
+                    ], spacing=4),
+                    padding=18,
+                    width=220,
+                    border_radius=14,
+                    bgcolor=ft.Colors.AMBER_50,
+                ),
+            ]
+
+            status_chart = ft.Column(
+                [ft.Text("Distribuição por status", weight=ft.FontWeight.BOLD)]
+                + ([build_status_bar(item) for item in status_items] if status_items else [ft.Text("Nenhuma entrega encontrada.")]),
+                spacing=10,
+            )
+            driver_chart = ft.Column(
+                [ft.Text("Distribuição por motorista", weight=ft.FontWeight.BOLD)]
+                + ([build_driver_bar(item) for item in driver_items] if driver_items else [ft.Text("Nenhum motorista encontrado.")]),
+                spacing=10,
+            )
+            organization_chart = ft.Column([
+                ft.Text("Entregas por organização", weight=ft.FontWeight.BOLD),
+            ], spacing=8)
+            if organization_items:
+                for item in organization_items:
+                    status_distribution = item.get("distribuicao_por_status") or []
+                    status_rows = [
+                        ft.Row([
+                            ft.Text(str(entry.get("status", "")).replace("_", " ").title(), size=11),
+                            ft.Text(str(entry.get("quantidade", 0)), size=11, weight=ft.FontWeight.BOLD),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+                        for entry in status_distribution
+                    ]
+                    if not status_rows:
+                        status_rows = [ft.Text("Nenhum status registrado.", size=11)]
+                    organization_chart.controls.append(
+                        ft.Column([
+                            ft.Row([
+                                ft.Text(str(item.get("organizacao") or f"Organização #{item.get('organizacao_id') or 'N/A'}"), size=12, weight=ft.FontWeight.BOLD),
+                                ft.Text(f"Total: {item.get('quantidade_total_pedidos', 0)}", size=12, weight=ft.FontWeight.BOLD),
+                            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                            ft.Divider(height=1),
+                            *status_rows,
+                        ], spacing=6)
+                    )
+            else:
+                organization_chart.controls.append(ft.Text("Nenhuma organização encontrada.", size=11))
+
             rows = [
                 ft.ListTile(
                     leading=ft.Icon(ft.Icons.LOCAL_SHIPPING, color=STATUS_COLORS.get(item["status"])),
@@ -4989,7 +5161,50 @@ class DeliveryApp:
                     ),
                     ft.IconButton(ft.Icons.CLEAR, tooltip="Limpar", on_click=lambda _: self.reports_view()),
                 ]), padding=20),
-                ft.Container(ft.Column(rows or [ft.Text("Nenhuma entrega encontrada.")]), padding=10),
+                ft.Container(ft.Row(cards, wrap=True, spacing=12), padding=ft.Padding(0, 0, 0, 20)),
+                ft.Row([
+                    ft.Container(
+                        ft.Column(rows or [ft.Text("Nenhuma entrega encontrada.")]),
+                        padding=10,
+                        expand=True,
+                        width=float("inf"),
+                        border_radius=14,
+                        bgcolor=ft.Colors.WHITE,
+                        shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+                    ),
+                    ft.Column([
+                        ft.Container(
+                            ft.Column([
+                                status_chart,
+                            ], spacing=10),
+                            padding=20,
+                            width=520,
+                            border_radius=14,
+                            bgcolor=ft.Colors.WHITE,
+                            shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+                        ),
+                        ft.Container(
+                            ft.Column([
+                                driver_chart,
+                            ], spacing=10),
+                            padding=20,
+                            width=520,
+                            border_radius=14,
+                            bgcolor=ft.Colors.WHITE,
+                            shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+                        ),
+                        ft.Container(
+                            ft.Column([
+                                organization_chart,
+                            ], spacing=10),
+                            padding=20,
+                            width=520,
+                            border_radius=14,
+                            bgcolor=ft.Colors.WHITE,
+                            shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.BLACK12),
+                        ),
+                    ], spacing=16, width=540),
+                ], spacing=20, vertical_alignment=ft.CrossAxisAlignment.START),
             ]
             self.page.update()
         except ApiError as exc:
