@@ -3911,8 +3911,7 @@ class DeliveryApp:
             valid = True
             self.clear_errors(name, document, email, phone)
 
-            if len(name.value.strip()) < 2:
-                self.set_error(name, "Informe pelo menos 2 caracteres.")
+            if not self.require_text(name, "Informe pelo menos 2 caracteres.", 2):
                 errors.append("Nome: informe pelo menos 2 caracteres.")
                 valid = False
 

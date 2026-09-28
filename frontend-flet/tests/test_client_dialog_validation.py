@@ -104,3 +104,62 @@ def test_client_dialog_trims_valid_email_in_request_payload():
     assert dialog.open is False
     app.notify.assert_called_once_with("Cliente cadastrado.")
     app.clients_view.assert_called_once_with()
+
+
+def test_client_dialog_rejects_empty_name_without_calling_api():
+    app = _make_app()
+    app.client_dialog()
+    dialog = app.page.dialog
+    name = _find_text_field(dialog, "Nome")
+    name.value = ""
+
+    _find_save_action(dialog).on_click(None)
+
+    assert name.error == "Informe pelo menos 2 caracteres."
+    assert any(
+        isinstance(control, ft.Text)
+        and control.value == "Nome: informe pelo menos 2 caracteres."
+        for control in dialog.content.controls
+    )
+    app.api.request.assert_not_called()
+    assert dialog.open is True
+    app.page.update.assert_called()
+
+
+def test_client_dialog_rejects_one_character_name_without_calling_api():
+    app = _make_app()
+    app.client_dialog()
+    dialog = app.page.dialog
+    name = _find_text_field(dialog, "Nome")
+    name.value = "A"
+
+    _find_save_action(dialog).on_click(None)
+
+    assert name.error == "Informe pelo menos 2 caracteres."
+    assert any(
+        isinstance(control, ft.Text)
+        and control.value == "Nome: informe pelo menos 2 caracteres."
+        for control in dialog.content.controls
+    )
+    app.api.request.assert_not_called()
+    assert dialog.open is True
+    app.page.update.assert_called()
+
+
+def test_client_dialog_accepts_two_character_name_and_saves():
+    app = _make_app()
+    app.client_dialog()
+    dialog = app.page.dialog
+    name = _find_text_field(dialog, "Nome")
+    name.value = "AB"
+
+    _find_save_action(dialog).on_click(None)
+
+    assert name.error is None
+    assert not any(
+        isinstance(control, ft.Text) and "Nome:" in control.value
+        for control in dialog.content.controls
+    )
+    app.api.request.assert_called_once()
+    assert app.api.request.call_args.kwargs["json"]["nome"] == "AB"
+    assert dialog.open is False
