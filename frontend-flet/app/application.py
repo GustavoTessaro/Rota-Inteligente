@@ -4781,7 +4781,9 @@ class DeliveryApp:
                         ft.IconButton(
                             ft.Icons.TOGGLE_ON if item["ativo"] else ft.Icons.TOGGLE_OFF,
                             tooltip="Desativar usuário" if item["ativo"] else "Ativar usuário",
-                            on_click=lambda _, user=item: self.set_user_status(user["id"], not user["ativo"]),
+                            on_click=lambda _, user=item: self.set_user_status(
+                                user["id"], not user["ativo"], user=user
+                            ),
                         ),
                         ft.IconButton(ft.Icons.DELETE, tooltip="Excluir usuário",
                                       icon_color=ft.Colors.RED_700,
@@ -4902,7 +4904,88 @@ class DeliveryApp:
         )
         self.open_dialog(dialog)
 
-    def set_user_status(self, user_id, active):
+    def _has_other_admin(self, target_user_id):
+        limit = 100
+        offset = 0
+        while True:
+            users = self.api.request("GET", f"/usuarios?limit={limit}&offset={offset}")
+            if any(
+                item.get("perfil") == "ADMIN" and item.get("id") != target_user_id
+                for item in users
+            ):
+                return True
+            if len(users) < limit:
+                return False
+            offset += limit
+
+    def _confirm_admin_user_action(self, user, action, method, path, payload_factory, success_message):
+        action_title = "exclusão" if action == "excluir" else "desativação"
+        password = ft.TextField(
+            label="Senha do usuário autenticado",
+            password=True,
+            can_reveal_password=True,
+        )
+        error_message = ft.Text("", color=ft.Colors.RED_700)
+
+        def confirm(_):
+            if not (password.value or "").strip():
+                error_message.value = "Informe sua senha para confirmar esta operação."
+                self.page.update()
+                return
+            try:
+                self.api.request(method, path, json=payload_factory(password.value))
+            except ApiError as exc:
+                error_message.value = str(exc)
+                self.page.update()
+                return
+            self.close_dialog(dialog)
+            self.notify(success_message)
+            self.users_view()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text(f"Confirmar {action_title} de ADMIN"),
+            content=ft.Column([
+                ft.Text(
+                    f'Informe sua senha para {action} o usuário ADMIN "{user["nome"]}".'
+                ),
+                password,
+                error_message,
+            ], tight=True, width=420),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _: self.close_dialog(dialog)),
+                ft.FilledButton("Confirmar", on_click=confirm),
+            ],
+        )
+        self.open_dialog(dialog)
+
+    def _prepare_admin_user_action(self, user, action):
+        try:
+            has_other_admin = self._has_other_admin(user["id"])
+        except ApiError as exc:
+            self.notify(str(exc), True)
+            return False
+        if not has_other_admin:
+            self.notify(
+                f"Não é possível {action} o único ADMIN cadastrado. "
+                "Cadastre outro ADMIN antes de realizar esta operação.",
+                True,
+            )
+            return False
+        return True
+
+    def set_user_status(self, user_id, active, user=None):
+        if not active and user and user.get("perfil") == "ADMIN":
+            if not self._prepare_admin_user_action(user, "desativar"):
+                return
+            self._confirm_admin_user_action(
+                user,
+                "desativar",
+                "PATCH",
+                f"/usuarios/{user_id}/status",
+                lambda password: {"ativo": False, "senha": password},
+                "Usuário desativado.",
+            )
+            return
         try:
             self.api.request("PATCH", f"/usuarios/{user_id}/status", json={"ativo": active})
             self.notify("Usuário ativado." if active else "Usuário desativado.")
@@ -4911,6 +4994,19 @@ class DeliveryApp:
             self.notify(str(exc), True)
 
     def confirm_delete_user(self, user):
+        if user.get("perfil") == "ADMIN":
+            if not self._prepare_admin_user_action(user, "excluir"):
+                return
+            self._confirm_admin_user_action(
+                user,
+                "excluir",
+                "DELETE",
+                f'/usuarios/{user["id"]}',
+                lambda password: {"senha": password},
+                "Usuário excluído.",
+            )
+            return
+
         def delete(_):
             try:
                 self.api.request("DELETE", f'/usuarios/{user["id"]}')
