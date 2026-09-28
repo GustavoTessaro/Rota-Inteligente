@@ -3922,9 +3922,7 @@ class DeliveryApp:
                 errors.append("CPF/CNPJ: use 11 dígitos para CPF ou 14 para CNPJ.")
                 valid = False
 
-            email_value = email.value.strip()
-            if email_value and ("@" not in email_value or "." not in email_value.split("@")[-1]):
-                self.set_error(email, "Informe um e-mail válido.")
+            if not self.validate_email_field(email, required=False):
                 errors.append("E-mail: informe um e-mail válido.")
                 valid = False
 
