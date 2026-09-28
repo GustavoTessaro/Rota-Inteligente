@@ -126,6 +126,15 @@ class StatusIn(BaseModel):
     ativo: bool
 
 
+class UsuarioDeleteIn(BaseModel):
+    senha: str | None = None
+
+
+class UsuarioStatusIn(BaseModel):
+    ativo: bool
+    senha: str | None = None
+
+
 class OrganizacaoCreate(BaseModel):
     nome: str = Field(min_length=2, max_length=150)
     cnpj: str
