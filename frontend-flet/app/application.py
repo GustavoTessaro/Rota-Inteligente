@@ -3820,8 +3820,7 @@ class DeliveryApp:
             errors = []
             valid = True
             self.clear_errors(name, cnpj, email)
-            if len(name.value.strip()) < 2:
-                self.set_error(name, "Informe pelo menos 2 caracteres.")
+            if not self.require_text(name, "Informe pelo menos 2 caracteres.", 2):
                 errors.append("Nome: informe pelo menos 2 caracteres.")
                 valid = False
             cnpj_digits = self.only_digits(cnpj.value)
