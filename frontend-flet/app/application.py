@@ -3704,6 +3704,7 @@ class DeliveryApp:
                     actions += [
                         ft.IconButton(
                             ft.Icons.TOGGLE_ON if item["ativo"] else ft.Icons.TOGGLE_OFF,
+                            icon_color=ft.Colors.GREEN if item["ativo"] else ft.Colors.RED,
                             tooltip="Desativar cliente" if item["ativo"] else "Ativar cliente",
                             on_click=lambda _, client=item: self.set_client_status(
                                 client["id"], not client["ativo"]
@@ -4626,6 +4627,7 @@ class DeliveryApp:
                                       on_click=lambda _, product=item: self.product_dialog(product)),
                         ft.IconButton(
                             ft.Icons.TOGGLE_ON if item["ativo"] else ft.Icons.TOGGLE_OFF,
+                            icon_color=ft.Colors.GREEN if item["ativo"] else ft.Colors.RED,
                             tooltip="Desativar produto" if item["ativo"] else "Ativar produto",
                             on_click=lambda _, product=item: self.set_product_status(
                                 product["id"], not product["ativo"]
@@ -4780,6 +4782,7 @@ class DeliveryApp:
                                       on_click=lambda _, user=item: self.user_dialog(user)),
                         ft.IconButton(
                             ft.Icons.TOGGLE_ON if item["ativo"] else ft.Icons.TOGGLE_OFF,
+                            icon_color=ft.Colors.GREEN if item["ativo"] else ft.Colors.RED,
                             tooltip="Desativar usuário" if item["ativo"] else "Ativar usuário",
                             on_click=lambda _, user=item: self.set_user_status(
                                 user["id"], not user["ativo"], user=user

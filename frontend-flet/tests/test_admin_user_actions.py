@@ -57,6 +57,18 @@ def _find_action(dialog, text):
     return next(action for action in dialog.actions if action.text == text)
 
 
+def _walk_controls(control):
+    yield control
+    for child in getattr(control, "controls", None) or []:
+        yield from _walk_controls(child)
+    content = getattr(control, "content", None)
+    if content is not None:
+        yield from _walk_controls(content)
+    trailing = getattr(control, "trailing", None)
+    if trailing is not None:
+        yield from _walk_controls(trailing)
+
+
 @pytest.mark.parametrize("operation", ["delete", "deactivate"])
 def test_only_admin_is_blocked_with_friendly_message_before_password(operation):
     target = _admin(1)
@@ -168,3 +180,84 @@ def test_admin_activation_keeps_existing_flow_without_password_prompt():
     assert app.page.dialog is None
     app.notify.assert_called_once_with("Usuário ativado.")
     app.users_view.assert_called_once_with()
+
+
+def test_users_view_toggle_colors_reflect_active_state():
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.user = {"perfil": "ADMIN"}
+    app.page = SimpleNamespace(update=MagicMock())
+    app.content = ft.Column(controls=[])
+    app.api = SimpleNamespace(request=MagicMock(return_value=[
+        {"id": 1, "nome": "Ativo", "email": "ativo@example.com", "perfil": "GESTOR", "ativo": True},
+        {"id": 2, "nome": "Inativo", "email": "inativo@example.com", "perfil": "GESTOR", "ativo": False},
+    ]))
+
+    app.users_view()
+
+    toggles = {
+        control.tooltip: control
+        for control in _walk_controls(app.content)
+        if isinstance(control, ft.IconButton)
+        and control.tooltip in {"Desativar usuário", "Ativar usuário"}
+    }
+
+    active_toggle = toggles["Desativar usuário"]
+    inactive_toggle = toggles["Ativar usuário"]
+    assert active_toggle.icon == ft.Icons.TOGGLE_ON
+    assert active_toggle.icon_color == ft.Colors.GREEN
+    assert inactive_toggle.icon == ft.Icons.TOGGLE_OFF
+    assert inactive_toggle.icon_color == ft.Colors.RED
+    assert active_toggle.bgcolor is None
+    assert inactive_toggle.bgcolor is None
+
+
+def test_client_and_product_toggles_use_active_state_colors():
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.user = {"perfil": "ADMIN"}
+    app.page = SimpleNamespace(update=MagicMock())
+    app.content = ft.Column(controls=[])
+    clients = [
+        {"id": 1, "nome": "Cliente Ativo", "email": "ativo@example.com", "telefone": None, "cpf_cnpj": None, "ativo": True},
+        {"id": 2, "nome": "Cliente Inativo", "email": "inativo@example.com", "telefone": None, "cpf_cnpj": None, "ativo": False},
+    ]
+    products = [
+        {"id": 3, "nome": "Produto Ativo", "descricao": "", "valor_declarado": 12.5, "peso": 1, "ativo": True},
+        {"id": 4, "nome": "Produto Inativo", "descricao": "", "valor_declarado": 8.0, "peso": 2, "ativo": False},
+    ]
+
+    def request(method, path, **kwargs):
+        if path.startswith("/clientes?"):
+            return clients
+        if path.startswith("/produtos?"):
+            return products
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    app.api = SimpleNamespace(request=MagicMock(side_effect=request))
+    app.clients_view()
+    client_toggles = {
+        control.tooltip: control
+        for control in _walk_controls(app.content)
+        if isinstance(control, ft.IconButton)
+        and control.tooltip in {"Desativar cliente", "Ativar cliente"}
+    }
+    app.products_view()
+    product_toggles = {
+        control.tooltip: control
+        for control in _walk_controls(app.content)
+        if isinstance(control, ft.IconButton)
+        and control.tooltip in {"Desativar produto", "Ativar produto"}
+    }
+    toggles = {**client_toggles, **product_toggles}
+
+    expected = {
+        "Desativar cliente": (ft.Icons.TOGGLE_ON, ft.Colors.GREEN),
+        "Ativar cliente": (ft.Icons.TOGGLE_OFF, ft.Colors.RED),
+        "Desativar produto": (ft.Icons.TOGGLE_ON, ft.Colors.GREEN),
+        "Ativar produto": (ft.Icons.TOGGLE_OFF, ft.Colors.RED),
+    }
+    for tooltip, (icon, color) in expected.items():
+        toggle = toggles[tooltip]
+        assert toggle.icon == icon
+        assert toggle.icon_color == color
+        assert toggle.on_click is not None
+        assert toggle.bgcolor is None
