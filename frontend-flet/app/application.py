@@ -2934,7 +2934,16 @@ class DeliveryApp:
                     ft.Column([
                         ft.Text("Pedidos disponíveis", weight=ft.FontWeight.BOLD, size=18),
                         ft.Container(
-                            ft.Column(order_checkboxes or [ft.Text("Nenhum pedido disponível.")], spacing=6, scroll=ft.ScrollMode.AUTO),
+                            ft.Row(
+                                [
+                                    ft.Column(
+                                        order_checkboxes or [ft.Text("Nenhum pedido disponível.")],
+                                        spacing=6,
+                                        scroll=ft.ScrollMode.AUTO,
+                                    )
+                                ],
+                                scroll=ft.ScrollMode.AUTO,
+                            ),
                             padding=12,
                             border_radius=14,
                             bgcolor=ft.Colors.WHITE,

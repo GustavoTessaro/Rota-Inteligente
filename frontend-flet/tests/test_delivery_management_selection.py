@@ -70,6 +70,35 @@ def test_delivery_order_toggle_state_update():
     assert view_call_count == 6, "Ambas as chamadas devem reconstruir a view"
 
 
+def test_delivery_management_orders_box_scrolls_both_axes():
+    """Verifica scroll horizontal e vertical sem alterar as dimensões do painel."""
+    from unittest.mock import MagicMock
+    import flet as ft
+    from app.application import DeliveryApp
+
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.api = MagicMock()
+    app.api.request.return_value = []
+    app.delivery_management_selection = {"pedido_ids": []}
+    app.generated_route = None
+    app.content = ft.Column()
+    app.page = MagicMock()
+    app._load_client_lookup = lambda orders: ({}, {})
+    app.header_bar = lambda title, subtitle: ft.Text(title)
+
+    app.delivery_management_view()
+
+    main_layout = app.content.controls[1].content
+    orders_box = main_layout.controls[0].controls[1]
+    horizontal_scroll = orders_box.content
+    vertical_scroll = horizontal_scroll.controls[0]
+
+    assert horizontal_scroll.scroll == ft.ScrollMode.AUTO
+    assert vertical_scroll.scroll == ft.ScrollMode.AUTO
+    assert orders_box.width == 520
+    assert orders_box.height == 420
+
+
 def test_select_all_clears_and_consistency():
     """Verifica que _select_all_orders() e _clear_selected_orders() funcionam."""
     from unittest.mock import MagicMock
