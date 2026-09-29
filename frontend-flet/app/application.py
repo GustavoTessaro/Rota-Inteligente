@@ -5150,7 +5150,10 @@ class DeliveryApp:
             cards = [
                 ft.Container(
                     ft.Column([
-                        ft.Text("Entregas Totais", color=ft.Colors.GREY_700),
+                        ft.Row([
+                            ft.Icon(ft.Icons.LOCAL_SHIPPING, size=18, color=ft.Colors.INDIGO),
+                            ft.Text("Entregas Totais", color=ft.Colors.GREY_700),
+                        ], spacing=8),
                         ft.Text(str(total), size=28, weight=ft.FontWeight.BOLD),
                     ], spacing=4),
                     padding=18,
@@ -5160,7 +5163,10 @@ class DeliveryApp:
                 ),
                 ft.Container(
                     ft.Column([
-                        ft.Text("Em Dia", color=ft.Colors.GREY_700),
+                        ft.Row([
+                            ft.Icon(ft.Icons.CHECK_CIRCLE, size=18, color=ft.Colors.GREEN),
+                            ft.Text("Em Dia", color=ft.Colors.GREY_700),
+                        ], spacing=8),
                         ft.Text(str(em_dia), size=28, weight=ft.FontWeight.BOLD),
                     ], spacing=4),
                     padding=18,
@@ -5170,7 +5176,10 @@ class DeliveryApp:
                 ),
                 ft.Container(
                     ft.Column([
-                        ft.Text("Com Atraso", color=ft.Colors.GREY_700),
+                        ft.Row([
+                            ft.Icon(ft.Icons.WARNING, size=18, color=ft.Colors.RED),
+                            ft.Text("Com Atraso", color=ft.Colors.GREY_700),
+                        ], spacing=8),
                         ft.Text(str(atrasadas), size=28, weight=ft.FontWeight.BOLD),
                     ], spacing=4),
                     padding=18,
@@ -5180,7 +5189,10 @@ class DeliveryApp:
                 ),
                 ft.Container(
                     ft.Column([
-                        ft.Text("Tempo Médio", color=ft.Colors.GREY_700),
+                        ft.Row([
+                            ft.Icon(ft.Icons.SCHEDULE, size=18, color=ft.Colors.AMBER),
+                            ft.Text("Tempo Médio", color=ft.Colors.GREY_700),
+                        ], spacing=8),
                         ft.Text(format_duration_minutes(tempo_medio_minutos), size=28, weight=ft.FontWeight.BOLD),
                     ], spacing=4),
                     padding=18,

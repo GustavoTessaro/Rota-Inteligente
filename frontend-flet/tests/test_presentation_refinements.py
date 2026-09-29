@@ -88,3 +88,53 @@ def test_profile_displays_organization_name_when_available():
 
     assert "Organização" in text_values
     assert "Angeloni" in text_values
+
+
+def test_reports_metric_cards_render_their_semantic_icons_and_values():
+    page = MagicMock(spec=ft.Page)
+    app = DeliveryApp(page)
+    app.api.request = MagicMock(return_value={
+        "total": 27,
+        "entregas_em_dia": 20,
+        "entregas_atrasadas": 3,
+        "tempo_medio_minutos": 90,
+        "entregas_por_status": [],
+        "entregas_por_motorista": [],
+        "entregas_por_organizacao": [],
+        "entregas": [],
+    })
+
+    app.reports_view()
+
+    cards_row = next(
+        control.content
+        for control in app.content.controls
+        if isinstance(control, ft.Container)
+        and isinstance(control.content, ft.Row)
+        and len(control.content.controls) == 4
+        and all(isinstance(card, ft.Container) for card in control.content.controls)
+    )
+    expected = {
+        "Entregas Totais": (ft.Icons.LOCAL_SHIPPING, "27"),
+        "Em Dia": (ft.Icons.CHECK_CIRCLE, "20"),
+        "Com Atraso": (ft.Icons.WARNING, "3"),
+        "Tempo Médio": (ft.Icons.SCHEDULE, "1h 30min"),
+    }
+
+    for card in cards_row.controls:
+        title_row = next(
+            row
+            for row in card.content.controls
+            if isinstance(row, ft.Row)
+            and any(isinstance(item, ft.Text) and item.value in expected for item in row.controls)
+        )
+        title = next(item.value for item in title_row.controls if isinstance(item, ft.Text))
+        icon = next(item for item in title_row.controls if isinstance(item, ft.Icon))
+        value = next(
+            item.value
+            for item in card.content.controls
+            if isinstance(item, ft.Text)
+        )
+
+        assert icon.name == expected[title][0]
+        assert value == expected[title][1]
