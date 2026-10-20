@@ -1341,14 +1341,57 @@ class DeliveryApp:
                         )
                     )
             elif route_status == "EM_EXECUCAO":
-                action_buttons.append(
-                    ft.FilledButton(
-                        "Pausar rota",
-                        icon=ft.Icons.PAUSE,
-                        expand=True,
-                        on_click=lambda _: self.change_route_status(route, "PAUSADA", event="PAUSA", observation="Pausada pelo motorista", stay_in_view=True),
-                    )
+                pause_button = ft.FilledButton(
+                    "Pausar rota",
+                    icon=ft.Icons.PAUSE,
+                    expand=True,
+                    on_click=lambda _: self.change_route_status(route, "PAUSADA", event="PAUSA", observation="Pausada pelo motorista", stay_in_view=True),
                 )
+                if self.user and self.user.get("perfil") == "MOTORISTA":
+                    def open_current_delivery_navigation(_):
+                        next_delivery = route.get("proxima_entrega")
+                        if not isinstance(next_delivery, dict):
+                            self.notify("Não há entrega pendente para navegar.", True)
+                            return
+
+                        address = next_delivery.get("destino")
+                        if not isinstance(address, dict):
+                            self.notify("A entrega atual não possui um endereço de destino válido.", True)
+                            return
+
+                        street = str(address.get("logradouro") or "").strip()
+                        number = str(address.get("numero") or "").strip()
+                        city = str(address.get("cidade") or "").strip()
+                        state = str(address.get("estado") or "").strip()
+                        if not all((street, number, city, state)):
+                            self.notify("O endereço da entrega atual está incompleto. Verifique o cadastro do endereço.", True)
+                            return
+
+                        destination = str(address.get("endereco_formatado") or "").strip()
+                        if not destination:
+                            destination = ", ".join(filter(None, [
+                                f"{street}, {number}",
+                                str(address.get("complemento") or "").strip(),
+                                str(address.get("bairro") or "").strip(),
+                                f"{city}/{state}",
+                                str(address.get("cep") or "").strip(),
+                            ]))
+                        maps_url = "https://www.google.com/maps/dir/?api=1&destination=" + quote(destination, safe="")
+                        try:
+                            self.page.launch_url(maps_url)
+                        except Exception:
+                            self.notify("Não foi possível abrir a navegação para a entrega atual.", True)
+
+                    action_buttons.append(ft.Row([
+                        pause_button,
+                        ft.OutlinedButton(
+                            "Navegador",
+                            expand=True,
+                            on_click=open_current_delivery_navigation,
+                        ),
+                    ], spacing=12))
+                else:
+                    action_buttons.append(pause_button)
                 if next_stop:
                     action_buttons.append(
                         ft.OutlinedButton(

@@ -1,6 +1,120 @@
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
+from unittest.mock import MagicMock
+
+import flet as ft
 
 from app.application import DeliveryApp
+
+
+def _render_running_route_for_profile(profile, destination):
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.user = {"perfil": profile}
+    app.api = SimpleNamespace(request=lambda method, path: {
+        "id": 42,
+        "nome": "Rota de teste",
+        "status": "EM_EXECUCAO",
+        "carga_confirmada": True,
+        "entregas": [
+            {
+                "entrega_id": 10,
+                "pedido_id": 20,
+                "ordem_visita": 1,
+                "sequencia_otimizada": 1,
+                "status": "ENTREGUE",
+                "destino": {
+                    "logradouro": "Rua antiga",
+                    "numero": "1",
+                    "cidade": "Lages",
+                    "estado": "SC",
+                },
+            },
+            {
+                "entrega_id": 11,
+                "pedido_id": 21,
+                "ordem_visita": 2,
+                "sequencia_otimizada": 2,
+                "status": "EM_ROTA",
+                "cliente": {"nome": "Cliente atual"},
+                "destino": destination,
+            },
+        ],
+    })
+    app.page = MagicMock()
+    app.content = ft.Column()
+    app.gps_tracking_state = "inativo"
+    app.header_bar = lambda *args, **kwargs: ft.Text("Rota Ativa")
+    app._sync_driver_tracking = lambda route: None
+    app._render_driver_map_native = lambda route, stops, next_stop: ft.Text("Mapa")
+    app.change_route_status = MagicMock()
+    app.notify = MagicMock()
+
+    app.driver_route_view(42)
+
+    actions_column = app.content.controls[1].content.controls[-1]
+    return app, actions_column.controls[0]
+
+
+def test_driver_navigation_button_uses_current_delivery_and_preserves_pause_action():
+    address = {
+        "logradouro": "Rua São João & Silva",
+        "numero": "42 A",
+        "bairro": "Centro",
+        "cidade": "São Paulo",
+        "estado": "SP",
+        "cep": "01000-000",
+    }
+    app, action_row = _render_running_route_for_profile("MOTORISTA", address)
+
+    pause_button, navigation_button = action_row.controls
+    assert pause_button.text == "Pausar rota"
+    assert navigation_button.text == "Navegador"
+
+    pause_button.on_click(None)
+    app.change_route_status.assert_called_once_with(
+        app.api.request("GET", "/rotas/motorista/atual"),
+        "PAUSADA",
+        event="PAUSA",
+        observation="Pausada pelo motorista",
+        stay_in_view=True,
+    )
+
+    navigation_button.on_click(None)
+    maps_url = app.page.launch_url.call_args.args[0]
+    assert urlsplit(maps_url).netloc == "www.google.com"
+    assert parse_qs(urlsplit(maps_url).query)["destination"] == [
+        "Rua São João & Silva, 42 A, Centro, São Paulo/SP, 01000-000"
+    ]
+
+
+def test_driver_navigation_does_not_open_for_incomplete_current_delivery_address():
+    app, action_row = _render_running_route_for_profile(
+        "MOTORISTA",
+        {"logradouro": "Rua incompleta", "numero": "42"},
+    )
+
+    navigation_button = action_row.controls[1]
+    navigation_button.on_click(None)
+
+    app.page.launch_url.assert_not_called()
+    app.notify.assert_called_once_with(
+        "O endereço da entrega atual está incompleto. Verifique o cadastro do endereço.",
+        True,
+    )
+
+
+def test_navigation_button_is_not_shown_for_non_driver_profile():
+    _, pause_button = _render_running_route_for_profile(
+        "GESTOR",
+        {
+            "logradouro": "Rua São João",
+            "numero": "42",
+            "cidade": "São Paulo",
+            "estado": "SP",
+        },
+    )
+
+    assert pause_button.text == "Pausar rota"
 
 
 def test_driver_route_snapshot_uses_route_payload_directly():
