@@ -133,6 +133,23 @@ def test_admin_sidebar_unchanged():
     assert "Organizações" in labels, "Admin deve ver Organizações"
 
 
+def test_logo_toggles_navigation_rail_and_divider_visibility():
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.page = MagicMock()
+    app.navigation_rail = ft.NavigationRail(destinations=[])
+    app.navigation_rail_divider = ft.VerticalDivider(width=1)
+
+    app._toggle_navigation_rail()
+
+    assert app.navigation_rail.visible is False
+    assert app.navigation_rail_divider.visible is False
+
+    app._toggle_navigation_rail()
+
+    assert app.navigation_rail.visible is True
+    assert app.navigation_rail_divider.visible is True
+
+
 # ============================================================================
 # ETAPA 2: MINHAS ROTAS
 # ============================================================================

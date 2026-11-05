@@ -565,6 +565,11 @@ class DeliveryApp:
         self.page.vertical_alignment = ft.MainAxisAlignment.CENTER
         self.page.update()
 
+    def _toggle_navigation_rail(self):
+        self.navigation_rail.visible = not self.navigation_rail.visible
+        self.navigation_rail_divider.visible = self.navigation_rail.visible
+        self.page.update()
+
     def show_shell(self):
         driver = self.user["perfil"] == "MOTORISTA"
         admin_user = self.user["perfil"] == "ADMIN"
@@ -640,6 +645,7 @@ class DeliveryApp:
             on_change=navigate,
         )
         self.navigation_rail = rail
+        self.navigation_rail_divider = ft.VerticalDivider(width=1)
         self.page.clean()
         self.page.horizontal_alignment = ft.CrossAxisAlignment.STRETCH
         self.page.vertical_alignment = ft.MainAxisAlignment.START
@@ -648,11 +654,14 @@ class DeliveryApp:
             padding=12,
         )
         self.page.appbar = ft.AppBar(
-            title=ft.Image(
-                src=str(APP_TITLE_LOGO_PATH),
-                width=100,
-                height=30,
-                fit=ft.ImageFit.CONTAIN,
+            title=ft.GestureDetector(
+                content=ft.Image(
+                    src=str(APP_TITLE_LOGO_PATH),
+                    width=100,
+                    height=30,
+                    fit=ft.ImageFit.CONTAIN,
+                ),
+                on_tap=lambda _: self._toggle_navigation_rail(),
             ),
             actions=[
                 self.connection_indicator,
@@ -664,7 +673,7 @@ class DeliveryApp:
         if driver and self.geolocation_provider.control not in self.page.overlay:
             self.page.overlay.append(self.geolocation_provider.control)
         self.page.on_disconnect = lambda _: self._stop_driver_tracking()
-        self.page.add(ft.Row([rail, ft.VerticalDivider(width=1), self.content], expand=True))
+        self.page.add(ft.Row([rail, self.navigation_rail_divider, self.content], expand=True))
         self.dashboard_active = True
         self.dashboard_screen_visible = True
         self._start_dashboard_refresh_loop()
