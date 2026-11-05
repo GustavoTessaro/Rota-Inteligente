@@ -520,7 +520,12 @@ def _serialize_route_for_driver(db: Session, rota: Rota) -> dict[str, Any]:
                 if pedido and pedido.cliente_id:
                     cliente = db.get(Cliente, pedido.cliente_id)
                     if cliente:
-                        cliente_payload = {"id": cliente.id, "nome": cliente.nome}
+                        cliente_payload = {
+                            "id": cliente.id,
+                            "nome": cliente.nome,
+                            "telefone": cliente.telefone,
+                            "observacoes": cliente.observacoes,
+                        }
             if entrega and entrega.endereco_destino_id:
                 end = db.get(Endereco, entrega.endereco_destino_id)
                 if end:
@@ -809,7 +814,12 @@ def get_route_loading_sequence(rota_id: int, db: Session = Depends(get_db), user
         if pedido and pedido.cliente_id:
             cliente = db.get(Cliente, pedido.cliente_id)
             if cliente:
-                cliente_payload = {"id": cliente.id, "nome": cliente.nome}
+                cliente_payload = {
+                    "id": cliente.id,
+                    "nome": cliente.nome,
+                    "telefone": cliente.telefone,
+                    "observacoes": cliente.observacoes,
+                }
         result.append({
             "id": entry.id,
             "entrega_id": entry.entrega_id,

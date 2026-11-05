@@ -35,10 +35,25 @@ def _render_running_route_for_profile(profile, destination):
                 "ordem_visita": 2,
                 "sequencia_otimizada": 2,
                 "status": "EM_ROTA",
-                "cliente": {"nome": "Cliente atual"},
+                "cliente": {
+                    "nome": "Cliente atual",
+                    "telefone": "(49) 99999-1234",
+                    "observacoes": "Entregar pela entrada lateral",
+                },
                 "destino": destination,
             },
         ],
+        "proxima_entrega": {
+            "entrega_id": 11,
+            "pedido_id": 21,
+            "status": "EM_ROTA",
+            "cliente": {
+                "nome": "Cliente atual",
+                "telefone": "(49) 99999-1234",
+                "observacoes": "Entregar pela entrada lateral",
+            },
+            "destino": destination,
+        },
     })
     app.page = MagicMock()
     app.content = ft.Column()
@@ -52,7 +67,8 @@ def _render_running_route_for_profile(profile, destination):
     app.driver_route_view(42)
 
     actions_column = app.content.controls[1].content.controls[-1]
-    return app, actions_column.controls[0]
+    stop_card = app.content.controls[2].content.controls[2]
+    return app, actions_column.controls[0], stop_card
 
 
 def test_driver_navigation_button_uses_current_delivery_and_preserves_pause_action():
@@ -64,7 +80,7 @@ def test_driver_navigation_button_uses_current_delivery_and_preserves_pause_acti
         "estado": "SP",
         "cep": "01000-000",
     }
-    app, action_row = _render_running_route_for_profile("MOTORISTA", address)
+    app, action_row, _ = _render_running_route_for_profile("MOTORISTA", address)
 
     pause_button, navigation_button = action_row.controls
     assert pause_button.text == "Pausar rota"
@@ -88,7 +104,7 @@ def test_driver_navigation_button_uses_current_delivery_and_preserves_pause_acti
 
 
 def test_driver_navigation_does_not_open_for_incomplete_current_delivery_address():
-    app, action_row = _render_running_route_for_profile(
+    app, action_row, _ = _render_running_route_for_profile(
         "MOTORISTA",
         {"logradouro": "Rua incompleta", "numero": "42"},
     )
@@ -104,7 +120,7 @@ def test_driver_navigation_does_not_open_for_incomplete_current_delivery_address
 
 
 def test_navigation_button_is_not_shown_for_non_driver_profile():
-    _, pause_button = _render_running_route_for_profile(
+    _, pause_button, _ = _render_running_route_for_profile(
         "GESTOR",
         {
             "logradouro": "Rua São João",
@@ -192,6 +208,22 @@ def test_next_driver_stop_uses_proxima_entrega_from_real_payload():
     assert next_stop is not None
     assert next_stop["delivery"]["id"] == 16
     assert next_stop["address"]["logradouro"] == "Rua Doutor Aujor Luz"
+
+
+def test_driver_sequence_card_displays_client_phone_below_address():
+    address = {
+        "logradouro": "Rua São João",
+        "numero": "42",
+        "bairro": "Centro",
+        "cidade": "Lages",
+        "estado": "SC",
+    }
+    _, _, stop_card = _render_running_route_for_profile("MOTORISTA", address)
+    details = stop_card.content.controls[1].controls
+
+    assert details[1].value.endswith("Centro – Lages/SC")
+    assert details[2].value == "Telefone: (49) 99999-1234"
+    assert details[3].value == "Observações: Entregar pela entrada lateral"
 
 
 def test_next_driver_stop_ignores_terminal_proxima_entrega_and_uses_route_sequence():

@@ -1280,6 +1280,8 @@ class DeliveryApp:
 
                 client_name = self._driver_stop_label(stop)
                 formatted_address = self._driver_stop_address(stop)
+                client_phone = str(cliente.get("telefone") or "Não informado").strip()
+                client_notes = str(cliente.get("observacoes") or "").strip()
 
                 stop_cards.append(
                     ft.Container(
@@ -1295,6 +1297,8 @@ class DeliveryApp:
                             ft.Column([
                                 ft.Text(f"Parada {index}: {client_name}", size=12, weight=ft.FontWeight.BOLD),
                                 ft.Text(formatted_address, size=11, color=ft.Colors.GREY_700),
+                                ft.Text(f"Telefone: {client_phone}", size=11, color=ft.Colors.GREY_700),
+                                *([ft.Text(f"Observações: {client_notes}", size=11, color=ft.Colors.GREY_700)] if client_notes else []),
                                 ft.Text(f"Status: {delivery_status.replace('_', ' ')} • Pedido: #{delivery.get('pedido_id', '--')}", size=10, color=ft.Colors.GREY_600),
                             ], spacing=2, expand=True),
                         ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
