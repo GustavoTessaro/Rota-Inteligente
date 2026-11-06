@@ -1,3 +1,6 @@
+import pytest
+
+
 OPERATOR_EMAIL = "admin@sistema.com"
 OPERATOR_PASSWORD = "123456"
 TARGET_PASSWORD = "target-admin-password"
@@ -196,3 +199,168 @@ def test_admin_activation_does_not_require_operation_password(client, admin_head
 
     assert activated.status_code == 200
     assert activated.json()["ativo"] is True
+
+
+def _manager_login(client):
+    response = client.post(
+        "/api/auth/login",
+        json={"email": "gestor1@sistema.com", "senha": "123456"},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_manager_lists_only_motorists_from_own_organization(client):
+    manager_login = _manager_login(client)
+    manager = manager_login["usuario"]
+
+    response = client.get(
+        "/api/usuarios?limit=100&offset=0",
+        headers={"Authorization": f"Bearer {manager_login['token']}"},
+    )
+
+    assert response.status_code == 200
+    users = response.json()
+    assert users
+    assert all(user["perfil"] == "MOTORISTA" for user in users)
+    assert all(user["organizacao_id"] == manager["organizacao_id"] for user in users)
+
+
+@pytest.mark.parametrize("profile", ["ADMIN", "GESTOR"])
+def test_manager_cannot_create_non_motorist(client, profile):
+    manager_login = _manager_login(client)
+    manager = manager_login["usuario"]
+
+    response = client.post(
+        "/api/usuarios",
+        headers={"Authorization": f"Bearer {manager_login['token']}"},
+        json={
+            "nome": f"Usuário {profile}",
+            "email": f"manager.cannot.create.{profile.lower()}@example.com",
+            "senha": "123456",
+            "perfil": profile,
+            "organizacao_id": manager["organizacao_id"],
+        },
+    )
+
+    assert response.status_code == 403
+
+
+def test_manager_can_create_and_edit_motorist_in_own_organization(client, admin_headers):
+    manager_login = _manager_login(client)
+    manager = manager_login["usuario"]
+    manager_headers = {"Authorization": f"Bearer {manager_login['token']}"}
+    created = client.post(
+        "/api/usuarios",
+        headers=manager_headers,
+        json={
+            "nome": "Motorista do Gestor",
+            "email": "manager.created.driver@example.com",
+            "senha": "123456",
+            "perfil": "MOTORISTA",
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    driver = created.json()
+    assert driver["perfil"] == "MOTORISTA"
+    assert driver["organizacao_id"] == manager["organizacao_id"]
+
+    updated = client.put(
+        f"/api/usuarios/{driver['id']}",
+        headers=manager_headers,
+        json={
+            "nome": "Motorista Atualizado",
+            "email": "manager.created.driver@example.com",
+            "senha": None,
+            "perfil": "MOTORISTA",
+            "organizacao_id": manager["organizacao_id"],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["nome"] == "Motorista Atualizado"
+
+    changed_role = client.put(
+        f"/api/usuarios/{driver['id']}",
+        headers=manager_headers,
+        json={
+            "nome": "Motorista Atualizado",
+            "email": "manager.created.driver@example.com",
+            "senha": None,
+            "perfil": "GESTOR",
+            "organizacao_id": manager["organizacao_id"],
+        },
+    )
+    assert changed_role.status_code == 403
+
+
+def test_manager_cannot_modify_users_outside_motorist_organization(client, admin_headers):
+    manager_login = _manager_login(client)
+    manager = manager_login["usuario"]
+    manager_headers = {"Authorization": f"Bearer {manager_login['token']}"}
+    organizations = client.get("/api/organizacoes", headers=admin_headers).json()
+    other_organization_id = next(
+        item["id"] for item in organizations if item["id"] != manager["organizacao_id"]
+    )
+    other_driver = client.post(
+        "/api/usuarios",
+        headers=admin_headers,
+        json={
+            "nome": "Motorista de Outra Organização",
+            "email": "manager.outside.driver@example.com",
+            "senha": "123456",
+            "perfil": "MOTORISTA",
+            "organizacao_id": other_organization_id,
+        },
+    )
+    other_manager = client.post(
+        "/api/usuarios",
+        headers=admin_headers,
+        json={
+            "nome": "Gestor da Organização",
+            "email": "manager.sameorg.target@example.com",
+            "senha": "123456",
+            "perfil": "GESTOR",
+            "organizacao_id": manager["organizacao_id"],
+        },
+    )
+    assert other_driver.status_code == 201, other_driver.text
+    assert other_manager.status_code == 201, other_manager.text
+
+    foreign_create = client.post(
+        "/api/usuarios",
+        headers=manager_headers,
+        json={
+            "nome": "Motorista Fora do Escopo",
+            "email": "manager.foreign.create@example.com",
+            "senha": "123456",
+            "perfil": "MOTORISTA",
+            "organizacao_id": other_organization_id,
+        },
+    )
+    assert foreign_create.status_code == 403
+
+    for target in (other_driver.json(), other_manager.json()):
+        update = client.put(
+            f"/api/usuarios/{target['id']}",
+            headers=manager_headers,
+            json={
+                "nome": target["nome"],
+                "email": target["email"],
+                "senha": None,
+                "perfil": "MOTORISTA",
+                "organizacao_id": manager["organizacao_id"],
+            },
+        )
+        status = client.patch(
+            f"/api/usuarios/{target['id']}/status",
+            headers=manager_headers,
+            json={"ativo": False},
+        )
+        delete = client.delete(
+            f"/api/usuarios/{target['id']}",
+            headers=manager_headers,
+        )
+        assert update.status_code == 403
+        assert status.status_code == 403
+        assert delete.status_code == 403

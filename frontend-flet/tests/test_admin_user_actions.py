@@ -211,6 +211,55 @@ def test_users_view_toggle_colors_reflect_active_state():
     assert inactive_toggle.bgcolor is None
 
 
+def test_manager_users_view_filters_to_motorists():
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.user = {"perfil": "GESTOR", "organizacao_id": 7}
+    app.page = SimpleNamespace(update=MagicMock())
+    app.content = ft.Column(controls=[])
+    app.header_bar = lambda *args, **kwargs: ft.Text(args[0])
+    app.page_controls = lambda *args, **kwargs: ft.Row([])
+    app.api = SimpleNamespace(request=MagicMock(return_value=[
+        {"id": 1, "nome": "Motorista", "email": "driver@example.com", "perfil": "MOTORISTA", "ativo": True},
+        {"id": 2, "nome": "Outro gestor", "email": "manager@example.com", "perfil": "GESTOR", "ativo": True},
+    ]))
+    app.user_dialog = MagicMock()
+    app.user_dialog_with_user = None
+
+    app.users_view()
+
+    displayed_names = [
+        control.title.value
+        for control in app.content.controls[2].content.controls
+        if isinstance(control, ft.ListTile)
+    ]
+    assert displayed_names == ["Motorista"]
+    app.api.request.assert_called_once_with("GET", "/usuarios?limit=10&offset=0")
+
+
+def test_manager_user_dialog_locks_profile_and_organization():
+    app = DeliveryApp.__new__(DeliveryApp)
+    app.user = {
+        "perfil": "GESTOR",
+        "organizacao_id": 7,
+        "organizacao": {"id": 7, "nome": "Operação Norte"},
+    }
+    app.page = SimpleNamespace(update=MagicMock())
+    app.api = SimpleNamespace(request=MagicMock())
+    app.open_dialog = lambda dialog: setattr(app.page, "dialog", dialog)
+
+    app.user_dialog()
+
+    fields = app.page.dialog.content.controls
+    profile = next(control for control in fields if isinstance(control, ft.Dropdown) and control.label == "Perfil")
+    organization = next(control for control in fields if isinstance(control, ft.Dropdown) and control.label == "Organização")
+    assert profile.value == "MOTORISTA"
+    assert [option.key for option in profile.options] == ["MOTORISTA"]
+    assert profile.disabled is True
+    assert organization.value == "7"
+    assert organization.disabled is True
+    app.api.request.assert_not_called()
+
+
 def test_client_and_product_toggles_use_active_state_colors():
     app = DeliveryApp.__new__(DeliveryApp)
     app.user = {"perfil": "ADMIN"}

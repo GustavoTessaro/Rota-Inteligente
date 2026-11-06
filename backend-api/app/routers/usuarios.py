@@ -48,7 +48,10 @@ def list_users(
     if user.perfil == Perfil.GESTOR:
         if user.organizacao_id is None:
             raise HTTPException(403, "Gestor sem organização não pode listar usuários")
-        stmt = stmt.where(Usuario.organizacao_id == user.organizacao_id)
+        stmt = stmt.where(
+            Usuario.organizacao_id == user.organizacao_id,
+            Usuario.perfil == Perfil.MOTORISTA,
+        )
     if limit:
         stmt = stmt.offset(offset).limit(limit)
     return db.scalars(stmt).all()

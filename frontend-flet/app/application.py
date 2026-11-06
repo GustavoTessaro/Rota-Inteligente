@@ -4814,15 +4814,17 @@ class DeliveryApp:
         self.open_dialog(dialog)
 
     def users_view(self, search="", offset=0):
-        if self.user["perfil"] != "ADMIN":
+        if self.user["perfil"] not in {"ADMIN", "GESTOR"}:
             self.content.controls = [
-                ft.Container(self.heading("Usuários", "Acesso restrito a administradores."), padding=20),
+                ft.Container(self.heading("Usuários", "Acesso restrito a administradores e gestores."), padding=20),
             ]
             self.page.update()
             return
         page_size = 10
         try:
             users = self.api.request("GET", f"/usuarios?limit={page_size}&offset={offset}")
+            if self.user["perfil"] == "GESTOR":
+                users = [item for item in users if item.get("perfil") == "MOTORISTA"]
             if search.strip():
                 term = search.strip().lower()
                 users = [
@@ -4881,6 +4883,7 @@ class DeliveryApp:
             self.notify(str(exc), True)
 
     def user_dialog(self, user=None):
+        is_manager = self.user["perfil"] == "GESTOR"
         name = ft.TextField(label="Nome", value=(user or {}).get("nome", ""))
         email = ft.TextField(label="E-mail", value=(user or {}).get("email", ""))
         password = ft.TextField(
@@ -4893,17 +4896,29 @@ class DeliveryApp:
         phone = ft.TextField(label="Telefone", value=(user or {}).get("telefone") or "")
         profile = ft.Dropdown(
             label="Perfil",
-            value=(user or {}).get("perfil", "GESTOR"),
-            options=[self.option(value) for value in ["ADMIN", "GESTOR", "MOTORISTA"]],
+            value="MOTORISTA" if is_manager else (user or {}).get("perfil", "GESTOR"),
+            options=[self.option(value) for value in (["MOTORISTA"] if is_manager else ["ADMIN", "GESTOR", "MOTORISTA"])],
+            disabled=is_manager,
         )
+        manager_organization = self.user.get("organizacao") or {}
+        manager_organization_id = self.user.get("organizacao_id")
         organization = ft.Dropdown(
             label="Organização",
-            value=str((user or {}).get("organizacao_id")) if (user or {}).get("organizacao_id") else None,
-            options=[],
+            value=str(manager_organization_id) if is_manager and manager_organization_id else (
+                str((user or {}).get("organizacao_id")) if (user or {}).get("organizacao_id") else None
+            ),
+            options=(
+                [self.option(manager_organization_id, manager_organization.get("nome") or f"Organização #{manager_organization_id}")]
+                if is_manager and manager_organization_id
+                else []
+            ),
+            disabled=is_manager,
         )
         error_message = ft.Text("", color=ft.Colors.RED_700)
 
         def load_organizations():
+            if is_manager:
+                return
             try:
                 orgs = self.api.request("GET", "/organizacoes?limit=100&offset=0")
                 organization.options = [self.option(item["id"], item["nome"]) for item in orgs]
@@ -4943,8 +4958,10 @@ class DeliveryApp:
                 "email": email.value.strip(),
                 "senha": password.value.strip() or None,
                 "telefone": phone.value.strip() or None,
-                "perfil": profile.value,
-                "organizacao_id": int(organization.value) if organization.value else None,
+                "perfil": "MOTORISTA" if is_manager else profile.value,
+                "organizacao_id": manager_organization_id if is_manager else (
+                    int(organization.value) if organization.value else None
+                ),
             }
             try:
                 if user:

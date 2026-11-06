@@ -122,8 +122,8 @@ def ensure_manageable_user_payload(current: Usuario, data):
         return
     if current.perfil != Perfil.GESTOR:
         raise HTTPException(403, "Perfil sem permissão para esta operação")
-    if data.perfil == Perfil.ADMIN:
-        raise HTTPException(403, "Gestor não pode criar ou alterar usuários com perfil ADMIN")
+    if data.perfil != Perfil.MOTORISTA:
+        raise HTTPException(403, "Gestor só pode criar ou alterar usuários com perfil MOTORISTA")
     if current.organizacao_id is None:
         raise HTTPException(403, "Gestor sem organização não pode gerir usuários")
     if data.organizacao_id is not None and data.organizacao_id != current.organizacao_id:
@@ -146,12 +146,10 @@ def ensure_user_management_scope(current: Usuario, target: Usuario):
         raise HTTPException(403, "Perfil sem permissão para esta operação")
     if current.organizacao_id is None:
         raise HTTPException(403, "Gestor sem organização não pode gerir usuários")
-    if target.perfil == Perfil.ADMIN:
-        raise HTTPException(403, "Gestor não pode criar ou alterar usuários com perfil ADMIN")
-    if target.organizacao_id is not None and target.organizacao_id != current.organizacao_id:
+    if target.perfil != Perfil.MOTORISTA:
+        raise HTTPException(403, "Gestor só pode gerir usuários com perfil MOTORISTA")
+    if target.organizacao_id != current.organizacao_id:
         raise HTTPException(403, "Gestor só pode gerir usuários de sua organização")
-    if target.organizacao_id is None:
-        target.organizacao_id = current.organizacao_id
 
 
 def order_has_delivery(db: Session, order_id: int) -> bool:
