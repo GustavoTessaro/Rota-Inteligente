@@ -514,6 +514,20 @@ def test_create_and_list_organizacao(client, admin_headers):
     assert any(item["id"] == created["id"] for item in list_response.json())
 
 
+def test_gestor_can_list_organizations_for_order_form(client):
+    login = client.post("/api/auth/login", json={
+        "email": "gestor1@sistema.com",
+        "senha": "123456",
+    })
+    assert login.status_code == 200
+    headers = {"Authorization": f'Bearer {login.json()["token"]}'}
+
+    response = client.get("/api/organizacoes?limit=100&offset=0", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()
+
+
 def test_update_organizacao(client, admin_headers):
     created = client.post("/api/organizacoes", headers=admin_headers, json={
         "nome": "Organizacao Atualizavel",

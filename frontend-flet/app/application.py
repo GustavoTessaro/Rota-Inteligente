@@ -515,10 +515,16 @@ class DeliveryApp:
                 pass
 
     def show_login(self):
-        email = ft.TextField(label="E-mail", value="admin@sistema.com", prefix_icon=ft.Icons.EMAIL)
+        email = ft.TextField(
+            label="E-mail",
+            value="admin@sistema.com",
+            prefix_icon=ft.Icons.EMAIL,
+            on_submit=lambda _: password.focus(),
+        )
         password = ft.TextField(
             label="Senha", value="123456", password=True, can_reveal_password=True,
             prefix_icon=ft.Icons.LOCK,
+            on_submit=lambda event: submit(event),
         )
 
         def submit(_):

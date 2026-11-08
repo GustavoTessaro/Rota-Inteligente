@@ -38,7 +38,7 @@ def list_organizacoes(
     limit: int | None = Query(None, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    _: Usuario = Depends(admin),
+    _: Usuario = Depends(staff),
 ):
     stmt = select(Organizacao).order_by(Organizacao.nome)
     if busca:
